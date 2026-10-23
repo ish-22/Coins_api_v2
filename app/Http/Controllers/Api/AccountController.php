@@ -20,19 +20,19 @@ class AccountController extends Controller
                 'displayName' => $user->display_name ?? $user->name,
                 'fullName' => $user->full_name ?? $user->name,
                 'email' => $user->email,
-                'phone' => $user->phone ?? '+1 555-019-8921',
-                'avatarInitials' => $user->avatar_initials ?? 'CP',
-                'accountCreationDate' => $user->created_at->format('M d, Y'),
+                'phone' => $user->phone ?? '',
+                'avatarInitials' => $user->avatar_initials ?? strtoupper(substr($user->name, 0, 2)),
+                'accountCreationDate' => $user->created_at ? $user->created_at->format('M d, Y') : now()->format('M d, Y'),
                 'accountStatus' => $user->status,
                 'verificationTier' => $user->kyc_tier,
                 'vipLevel' => $user->vip_level,
-                'country' => $user->country ?? 'United States',
-                'language' => $user->language,
-                'timeZone' => $user->time_zone,
-                'displayCurrency' => $user->display_currency,
-                'dateFormat' => $user->date_format,
-                'defaultDashboardView' => $user->default_dashboard_view,
-                'themePreference' => $user->theme_preference,
+                'country' => $user->country ?? '',
+                'language' => $user->language ?? 'English (US)',
+                'timeZone' => $user->time_zone ?? 'UTC-05:00 (Eastern Time)',
+                'displayCurrency' => $user->display_currency ?? 'USD',
+                'dateFormat' => $user->date_format ?? 'YYYY-MM-DD',
+                'defaultDashboardView' => $user->default_dashboard_view ?? 'pro_terminal',
+                'themePreference' => $user->theme_preference ?? 'black_gold',
                 'notifications' => $user->notifications_config ?? [
                     'tradeFills' => true,
                     'securityAlerts' => true,
@@ -48,6 +48,7 @@ class AccountController extends Controller
         $user = $request->user();
 
         $validated = $request->validate([
+            'fullName' => ['nullable', 'string', 'max:128'],
             'displayName' => ['nullable', 'string', 'max:64'],
             'phone' => ['nullable', 'string', 'max:32'],
             'country' => ['nullable', 'string', 'max:64'],
@@ -60,6 +61,12 @@ class AccountController extends Controller
             'notifications' => ['nullable', 'array'],
         ]);
 
+        if (isset($validated['fullName'])) {
+            $user->full_name = $validated['fullName'];
+            $user->name = $validated['fullName'];
+            $nameParts = explode(' ', trim($validated['fullName']));
+            $user->avatar_initials = strtoupper(substr($nameParts[0], 0, 1) . (isset($nameParts[1]) ? substr($nameParts[1], 0, 1) : ''));
+        }
         if (isset($validated['displayName'])) $user->display_name = $validated['displayName'];
         if (isset($validated['phone'])) $user->phone = $validated['phone'];
         if (isset($validated['country'])) $user->country = $validated['country'];
@@ -75,6 +82,31 @@ class AccountController extends Controller
 
         return response()->json([
             'message' => 'Profile preferences updated successfully.',
+            'profile' => [
+                'uid' => $user->uid,
+                'displayName' => $user->display_name ?? $user->name,
+                'fullName' => $user->full_name ?? $user->name,
+                'email' => $user->email,
+                'phone' => $user->phone ?? '',
+                'avatarInitials' => $user->avatar_initials ?? strtoupper(substr($user->name, 0, 2)),
+                'accountCreationDate' => $user->created_at ? $user->created_at->format('M d, Y') : now()->format('M d, Y'),
+                'accountStatus' => $user->status,
+                'verificationTier' => $user->kyc_tier,
+                'vipLevel' => $user->vip_level,
+                'country' => $user->country ?? '',
+                'language' => $user->language ?? 'English (US)',
+                'timeZone' => $user->time_zone ?? 'UTC-05:00 (Eastern Time)',
+                'displayCurrency' => $user->display_currency ?? 'USD',
+                'dateFormat' => $user->date_format ?? 'YYYY-MM-DD',
+                'defaultDashboardView' => $user->default_dashboard_view ?? 'pro_terminal',
+                'themePreference' => $user->theme_preference ?? 'black_gold',
+                'notifications' => $user->notifications_config ?? [
+                    'tradeFills' => true,
+                    'securityAlerts' => true,
+                    'priceAlerts' => true,
+                    'marketingNews' => false,
+                ],
+            ],
             'user' => $user,
         ]);
     }

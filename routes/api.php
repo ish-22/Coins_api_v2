@@ -118,6 +118,8 @@ Route::middleware(['auth:sanctum', AdminMiddleware::class])->prefix('admin')->gr
     Route::delete('/announcements/{id}', [AdminController::class, 'deleteAnnouncement']);
     Route::get('/assets', [AdminController::class, 'getAssets']);
     Route::put('/assets/{id}', [AdminController::class, 'updateAsset']);
+    Route::get('/support-tickets', [AdminController::class, 'getSupportTickets']);
+    Route::post('/support-tickets/{id}/reply', [AdminController::class, 'replySupportTicket']);
     Route::get('/audit-logs', [AdminController::class, 'getAuditLogs']);
     Route::get('/settings', [AdminController::class, 'getSettings']);
     Route::put('/settings', [AdminController::class, 'updateSettings']);

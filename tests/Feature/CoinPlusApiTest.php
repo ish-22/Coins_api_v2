@@ -73,4 +73,32 @@ class CoinPlusApiTest extends TestCase
         $response->assertStatus(200)
             ->assertJsonStructure(['metrics' => ['totalUsers', 'volume24hUsd']]);
     }
+
+    public function test_admin_user_list_and_status_update(): void
+    {
+        $admin = User::where('email', 'operator@coinplus.io')->first();
+        $user = User::where('email', 'demo.trader@coinplus.io')->first();
+
+        $listResponse = $this->actingAs($admin)->getJson('/api/admin/users');
+        $listResponse->assertStatus(200)
+            ->assertJsonStructure(['users' => [['id', 'userRef', 'name', 'email', 'status']]]);
+
+        $suspendResponse = $this->actingAs($admin)->putJson('/api/admin/users/' . $user->id . '/status', [
+            'status' => 'suspended',
+        ]);
+
+        $suspendResponse->assertStatus(200)
+            ->assertJsonFragment(['message' => 'User status updated successfully.']);
+
+        $user->refresh();
+        $this->assertSame('suspended', $user->status);
+
+        $restoreResponse = $this->actingAs($admin)->putJson('/api/admin/users/' . $user->id . '/status', [
+            'status' => 'active',
+        ]);
+
+        $restoreResponse->assertStatus(200);
+        $user->refresh();
+        $this->assertSame('active', $user->status);
+    }
 }

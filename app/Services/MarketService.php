@@ -2,85 +2,253 @@
 
 namespace App\Services;
 
+use App\Models\Asset;
 use App\Models\TradingPair;
-use App\Models\Order;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 class MarketService
 {
     /**
-     * Get 24h ticker overview for active pairs.
+     * Map platform pair / asset identifiers to Binance API symbols.
      */
-    public function getTickers(): array
-    {
-        $pairs = TradingPair::where('is_active', true)->get();
+    protected array $symbolMap = [
+        'BTC-USDT'  => 'BTCUSDT',
+        'BTC/USDT'  => 'BTCUSDT',
+        'ETH-USDT'  => 'ETHUSDT',
+        'ETH/USDT'  => 'ETHUSDT',
+        'SOL-USDT'  => 'SOLUSDT',
+        'SOL/USDT'  => 'SOLUSDT',
+        'BNB-USDT'  => 'BNBUSDT',
+        'BNB/USDT'  => 'BNBUSDT',
+        'XRP-USDT'  => 'XRPUSDT',
+        'XRP/USDT'  => 'XRPUSDT',
+        'DOGE-USDT' => 'DOGEUSDT',
+        'DOGE/USDT' => 'DOGEUSDT',
+        'USDC-USDT' => 'USDCUSDT',
+        'USDC/USDT' => 'USDCUSDT',
+    ];
 
-        return $pairs->map(function ($pair) {
-            return [
-                'symbol' => $pair->symbol,
-                'base' => $pair->base_asset,
-                'quote' => $pair->quote_asset,
-                'lastPrice' => (float) $pair->last_price,
-                'priceChangePercent' => (float) $pair->change_24h,
-                'high24h' => (float) $pair->high_24h,
-                'low24h' => (float) $pair->low_24h,
-                'volume24h' => (float) $pair->volume_24h,
-                'quoteVolume24h' => (float) ($pair->volume_24h * $pair->last_price),
-            ];
-        })->toArray();
+    /**
+     * Convert platform pair into Binance symbol.
+     */
+    public function getBinanceSymbol(string $pair): string
+    {
+        $clean = strtoupper(trim($pair));
+        if (isset($this->symbolMap[$clean])) {
+            return $this->symbolMap[$clean];
+        }
+
+        $formatted = str_replace(['-', '/'], '', $clean);
+        return $formatted;
     }
 
     /**
-     * Get order book depth for pair.
+     * Sync and return 24h ticker data with real live prices from Binance.
      */
-    public function getOrderBook(string $symbol): array
+    public function getLiveTickers(): array
     {
-        $symbol = strtoupper(str_replace('-', '/', $symbol));
-        $pair = TradingPair::where('symbol', $symbol)->first();
+        return Cache::remember('live_market_tickers_data', 10, function () {
+            try {
+                // Fetch live 24h tickers from Binance
+                $symbolsParam = json_encode(array_values(array_unique($this->symbolMap)));
+                $response = Http::timeout(3)->get('https://api.binance.com/api/v3/ticker/24hr', [
+                    'symbols' => $symbolsParam,
+                ]);
 
-        $last = $pair ? (float) $pair->last_price : 67250.0;
+                if ($response->successful()) {
+                    $tickers = $response->json();
+                    $tickerBySymbol = [];
+                    foreach ($tickers as $t) {
+                        if (isset($t['symbol'])) {
+                            $tickerBySymbol[$t['symbol']] = $t;
+                        }
+                    }
 
-        $bids = [];
+                    // Update TradingPair models in database
+                    $pairs = TradingPair::all();
+                    foreach ($pairs as $pair) {
+                        $bSymbol = $this->getBinanceSymbol($pair->symbol);
+                        if (isset($tickerBySymbol[$bSymbol])) {
+                            $data = $tickerBySymbol[$bSymbol];
+                            $pair->price = (float) $data['lastPrice'];
+                            $pair->change_24h = (float) $data['priceChangePercent'];
+                            $pair->high_24h = (float) $data['highPrice'];
+                            $pair->low_24h = (float) $data['lowPrice'];
+                            $pair->volume_24h_base = (float) $data['volume'];
+                            $pair->volume_24h_quote = (float) $data['quoteVolume'];
+                            $pair->save();
+
+                            // Also sync corresponding Asset in database
+                            $asset = Asset::where('symbol', $pair->base_asset)->first();
+                            if ($asset) {
+                                $asset->price_usd = (float) $data['lastPrice'];
+                                $asset->change_24h = (float) $data['priceChangePercent'];
+                                $asset->volume_24h = (float) $data['quoteVolume'];
+                                $asset->save();
+                            }
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::warning('Binance live ticker sync failed, using cached/db values: ' . $e->getMessage());
+            }
+
+            // Return all active pairs with latest prices
+            return TradingPair::all()->map(function ($p) {
+                return [
+                    'id' => $p->id,
+                    'symbol' => $p->symbol,
+                    'baseAsset' => $p->base_asset,
+                    'quoteAsset' => $p->quote_asset,
+                    'price' => (float) $p->price,
+                    'change24h' => (float) $p->change_24h,
+                    'high24h' => (float) $p->high_24h,
+                    'low24h' => (float) $p->low_24h,
+                    'volume24hBtc' => (float) $p->volume_24h_base,
+                    'volume24hUsdt' => (float) $p->volume_24h_quote,
+                    'priceDecimals' => (int) $p->price_decimals,
+                    'amountDecimals' => (int) $p->amount_decimals,
+                    'minAmount' => (float) $p->min_amount,
+                    'makerFee' => (float) $p->maker_fee,
+                    'takerFee' => (float) $p->taker_fee,
+                ];
+            })->toArray();
+        });
+    }
+
+    /**
+     * Get real live order book depth from Binance.
+     */
+    public function getLiveOrderBook(string $pair): array
+    {
+        $binanceSymbol = $this->getBinanceSymbol($pair);
+        $formattedPair = str_replace('-', '/', strtoupper($pair));
+
+        try {
+            $res = Http::timeout(2)->get('https://api.binance.com/api/v3/depth', [
+                'symbol' => $binanceSymbol,
+                'limit' => 12,
+            ]);
+
+            if ($res->successful()) {
+                $data = $res->json();
+                $asks = [];
+                $bids = [];
+
+                $maxTotal = 1;
+                foreach ($data['asks'] as $item) {
+                    $price = (float) $item[0];
+                    $amount = (float) $item[1];
+                    $total = round($price * $amount, 2);
+                    if ($total > $maxTotal) $maxTotal = $total;
+                    $asks[] = [
+                        'price' => $price,
+                        'amount' => $amount,
+                        'total' => $total,
+                        'depthPercent' => 0,
+                    ];
+                }
+
+                foreach ($data['bids'] as $item) {
+                    $price = (float) $item[0];
+                    $amount = (float) $item[1];
+                    $total = round($price * $amount, 2);
+                    if ($total > $maxTotal) $maxTotal = $total;
+                    $bids[] = [
+                        'price' => $price,
+                        'amount' => $amount,
+                        'total' => $total,
+                        'depthPercent' => 0,
+                    ];
+                }
+
+                foreach ($asks as &$ask) {
+                    $ask['depthPercent'] = min(100, round(($ask['total'] / $maxTotal) * 100, 1));
+                }
+                foreach ($bids as &$bid) {
+                    $bid['depthPercent'] = min(100, round(($bid['total'] / $maxTotal) * 100, 1));
+                }
+
+                return [
+                    'pair' => $formattedPair,
+                    'asks' => array_reverse($asks),
+                    'bids' => $bids,
+                ];
+            }
+        } catch (\Throwable $e) {
+            Log::info('Live orderbook fetch fallback: ' . $e->getMessage());
+        }
+
+        // Fallback generator around current price
+        $tp = TradingPair::where('symbol', $formattedPair)->orWhere('id', $pair)->first();
+        $basePrice = $tp ? (float) $tp->price : 80000.0;
+
         $asks = [];
+        $bids = [];
+        for ($i = 1; $i <= 12; $i++) {
+            $price = round($basePrice + ($i * ($basePrice * 0.0003)), 2);
+            $amount = round((rand(10, 80) / 100), 4);
+            $total = round($price * $amount, 2);
+            $asks[] = ['price' => $price, 'amount' => $amount, 'total' => $total, 'depthPercent' => rand(15, 85)];
 
-        for ($i = 1; $i <= 15; $i++) {
-            $bidPrice = round($last * (1 - ($i * 0.0008)), 2);
-            $bidQty = round(0.15 + (sin($i) * 0.1) + ($i * 0.08), 4);
-            $bids[] = [$bidPrice, $bidQty, round($bidPrice * $bidQty, 2)];
-
-            $askPrice = round($last * (1 + ($i * 0.0008)), 2);
-            $askQty = round(0.12 + (cos($i) * 0.09) + ($i * 0.07), 4);
-            $asks[] = [$askPrice, $askQty, round($askPrice * $askQty, 2)];
+            $bPrice = round($basePrice - ($i * ($basePrice * 0.0003)), 2);
+            $bAmount = round((rand(15, 95) / 100), 4);
+            $bTotal = round($bPrice * $bAmount, 2);
+            $bids[] = ['price' => $bPrice, 'amount' => $bAmount, 'total' => $bTotal, 'depthPercent' => rand(15, 85)];
         }
 
         return [
-            'symbol' => $symbol,
-            'timestamp' => now()->timestamp * 1000,
+            'pair' => $formattedPair,
+            'asks' => array_reverse($asks),
             'bids' => $bids,
-            'asks' => $asks,
         ];
     }
 
     /**
-     * Get recent public trades for pair.
+     * Get real live recent trades from Binance.
      */
-    public function getRecentTrades(string $symbol): array
+    public function getLiveRecentTrades(string $pair): array
     {
-        $symbol = strtoupper(str_replace('-', '/', $symbol));
-        $pair = TradingPair::where('symbol', $symbol)->first();
-        $basePrice = $pair ? (float) $pair->last_price : 67250.0;
+        $binanceSymbol = $this->getBinanceSymbol($pair);
+
+        try {
+            $res = Http::timeout(2)->get('https://api.binance.com/api/v3/trades', [
+                'symbol' => $binanceSymbol,
+                'limit' => 20,
+            ]);
+
+            if ($res->successful()) {
+                $trades = [];
+                foreach ($res->json() as $t) {
+                    $trades[] = [
+                        'id' => (string) $t['id'],
+                        'price' => (float) $t['price'],
+                        'amount' => (float) $t['qty'],
+                        'time' => date('H:i:s', (int) ($t['time'] / 1000)),
+                        'side' => $t['isBuyerMaker'] ? 'sell' : 'buy',
+                    ];
+                }
+                return array_reverse($trades);
+            }
+        } catch (\Throwable $e) {
+            Log::info('Live trades fetch fallback: ' . $e->getMessage());
+        }
+
+        $formattedPair = str_replace('-', '/', strtoupper($pair));
+        $tp = TradingPair::where('symbol', $formattedPair)->orWhere('id', $pair)->first();
+        $basePrice = $tp ? (float) $tp->price : 80000.0;
 
         $trades = [];
-        $now = now()->timestamp * 1000;
-
         for ($i = 0; $i < 20; $i++) {
-            $isBuy = ($i % 2 === 0);
-            $delta = ($isBuy ? 1 : -1) * ($i * 1.5);
+            $side = (rand(0, 100) > 48) ? 'buy' : 'sell';
             $trades[] = [
-                'id' => 'trd-' . (100000 + $i),
-                'price' => round($basePrice + $delta, 2),
-                'amount' => round(0.05 + ($i * 0.04), 4),
-                'side' => $isBuy ? 'BUY' : 'SELL',
-                'time' => $now - ($i * 14000),
+                'id' => 'tr-' . time() . '-' . $i,
+                'price' => round($basePrice + (rand(-10, 10) * 0.5), 2),
+                'amount' => round(rand(5, 50) / 100, 4),
+                'time' => date('H:i:s', time() - ($i * 12)),
+                'side' => $side,
             ];
         }
 
@@ -88,37 +256,65 @@ class MarketService
     }
 
     /**
-     * Get OHLCV candlestick series.
+     * Get real live candlestick klines from Binance.
      */
-    public function getCandles(string $symbol, string $interval = '1h'): array
+    public function getLiveCandles(string $pair, string $timeframe = '1h'): array
     {
-        $symbol = strtoupper(str_replace('-', '/', $symbol));
-        $pair = TradingPair::where('symbol', $symbol)->first();
-        $curr = $pair ? (float) $pair->last_price : 67250.0;
+        $binanceSymbol = $this->getBinanceSymbol($pair);
+        $intervalMap = [
+            '1m' => '1m', '5m' => '5m', '15m' => '15m', '30m' => '30m',
+            '1h' => '1h', '4h' => '4h', '1d' => '1d', '1w' => '1w',
+        ];
+        $interval = $intervalMap[$timeframe] ?? '1h';
+
+        try {
+            $res = Http::timeout(2)->get('https://api.binance.com/api/v3/klines', [
+                'symbol' => $binanceSymbol,
+                'interval' => $interval,
+                'limit' => 36,
+            ]);
+
+            if ($res->successful()) {
+                $candles = [];
+                foreach ($res->json() as $k) {
+                    $candles[] = [
+                        'time' => date('H:i', (int) ($k[0] / 1000)),
+                        'open' => (float) $k[1],
+                        'high' => (float) $k[2],
+                        'low' => (float) $k[3],
+                        'close' => (float) $k[4],
+                        'volume' => (float) $k[5],
+                    ];
+                }
+                return $candles;
+            }
+        } catch (\Throwable $e) {
+            Log::info('Live candles fetch fallback: ' . $e->getMessage());
+        }
+
+        $formattedPair = str_replace('-', '/', strtoupper($pair));
+        $tp = TradingPair::where('symbol', $formattedPair)->orWhere('id', $pair)->first();
+        $basePrice = $tp ? (float) $tp->price : 80000.0;
 
         $candles = [];
-        $points = 48;
-        $now = now()->timestamp * 1000;
-        $step = 3600 * 1000;
-
-        $price = $curr * 0.96;
-        for ($i = $points; $i >= 0; $i--) {
-            $open = $price;
-            $noise = (sin($i * 0.4) * 0.008) + ((($i % 3) - 1) * 0.004);
-            $close = round($open * (1 + $noise), 2);
-            $high = round(max($open, $close) * 1.004, 2);
-            $low = round(min($open, $close) * 0.996, 2);
-            $vol = round(120 + abs(sin($i)) * 340, 2);
+        $currentPrice = $basePrice * 0.98;
+        for ($i = 0; $i < 36; $i++) {
+            $delta = $currentPrice * 0.005 * (rand(20, 100) / 100);
+            $isBull = (rand(0, 100) > 45);
+            $open = $currentPrice;
+            $close = $isBull ? $open + $delta : $open - $delta;
+            $high = max($open, $close) + ($currentPrice * 0.002);
+            $low = min($open, $close) - ($currentPrice * 0.002);
 
             $candles[] = [
-                'time' => $now - ($i * $step),
-                'open' => $open,
-                'high' => $high,
-                'low' => $low,
-                'close' => $close,
-                'volume' => $vol,
+                'time' => sprintf('%02d:00', ($i + 8) % 24),
+                'open' => round($open, 2),
+                'high' => round($high, 2),
+                'low' => round($low, 2),
+                'close' => round($close, 2),
+                'volume' => rand(50, 400),
             ];
-            $price = $close;
+            $currentPrice = $close;
         }
 
         return $candles;

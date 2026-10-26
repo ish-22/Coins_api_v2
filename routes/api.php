@@ -47,6 +47,7 @@ Route::prefix('markets')->group(function () {
 // ── Public Informational & Inquiries ──
 Route::get('/announcements', [AdminController::class, 'getAnnouncements']);
 Route::post('/support/contact', [SupportController::class, 'submitContact'])->middleware('throttle:5,1');
+Route::get('/wallet/deposit/address', [WalletController::class, 'getDepositAddress']);
 
 // ── Protected Customer Routes (Sanctum Authenticated) ──
 Route::middleware('auth:sanctum')->group(function () {
@@ -82,7 +83,6 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/summary', [WalletController::class, 'getSummary']);
         Route::get('/assets', [WalletController::class, 'getAssets']);
         Route::get('/transactions', [WalletController::class, 'getTransactions']);
-        Route::get('/deposit/address', [WalletController::class, 'getDepositAddress']);
         Route::post('/deposit/simulate', [WalletController::class, 'simulateDeposit']);
         Route::post('/withdraw', [WalletController::class, 'withdraw']);
         Route::get('/watchlist', [WalletController::class, 'getWatchlist']);

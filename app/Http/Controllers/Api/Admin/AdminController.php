@@ -8,6 +8,7 @@ use App\Models\Asset;
 use App\Models\AuditLog;
 use App\Models\KycVerification;
 use App\Models\Order;
+use App\Models\SupportMessage;
 use App\Models\SupportTicket;
 use App\Models\SystemSetting;
 use App\Models\Transaction;
@@ -329,6 +330,71 @@ class AdminController extends Controller
         return response()->json([
             'logs' => AuditLog::orderBy('created_at', 'desc')->take(50)->get(),
         ]);
+    }
+
+    public function getSupportTickets(): JsonResponse
+    {
+        $tickets = SupportTicket::with(['user', 'messages'])
+            ->orderBy('created_at', 'desc')
+            ->get()
+            ->map(function ($ticket) {
+                return [
+                    'id' => (string) $ticket->id,
+                    'ticketRef' => $ticket->ticket_ref,
+                    'userId' => (string) $ticket->user_id,
+                    'userName' => $ticket->user ? $ticket->user->name : 'Customer',
+                    'userEmail' => $ticket->user ? $ticket->user->email : 'support@coinplus.io',
+                    'subject' => $ticket->subject,
+                    'category' => $ticket->category,
+                    'priority' => $ticket->priority,
+                    'status' => $ticket->status,
+                    'createdAt' => $ticket->created_at ? $ticket->created_at->format('M d, Y H:i') : null,
+                    'updatedAt' => $ticket->updated_at ? $ticket->updated_at->format('M d, Y H:i') : null,
+                    'messages' => $ticket->messages->map(function ($msg) {
+                        return [
+                            'id' => (string) $msg->id,
+                            'sender' => $msg->sender_type,
+                            'senderName' => $msg->sender_name,
+                            'message' => $msg->message,
+                            'timestamp' => $msg->created_at ? $msg->created_at->format('M d, Y H:i') : null,
+                        ];
+                    })->values()->all(),
+                ];
+            });
+
+        return response()->json([
+            'tickets' => $tickets,
+        ]);
+    }
+
+    public function replySupportTicket(Request $request, int $id): JsonResponse
+    {
+        $validated = $request->validate([
+            'message' => ['required', 'string'],
+        ]);
+
+        $ticket = SupportTicket::findOrFail($id);
+
+        $msg = SupportMessage::create([
+            'support_ticket_id' => $ticket->id,
+            'sender_type' => 'agent',
+            'sender_name' => $request->user()->name,
+            'message' => $validated['message'],
+        ]);
+
+        $ticket->status = 'waiting_user';
+        $ticket->save();
+
+        return response()->json([
+            'message' => 'Support reply posted successfully.',
+            'reply' => [
+                'id' => (string) $msg->id,
+                'sender' => 'agent',
+                'senderName' => $request->user()->name,
+                'message' => $msg->message,
+                'created_at' => $msg->created_at,
+            ],
+        ], 201);
     }
 
     public function getSettings(): JsonResponse

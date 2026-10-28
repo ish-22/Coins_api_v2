@@ -33,6 +33,8 @@ class TradeController extends Controller
                     'total' => (float) $o->total,
                     'status' => $o->status,
                     'time' => $o->created_at->format('H:i:s'),
+                    'dateTime' => $o->created_at->format('Y-m-d H:i:s'),
+                    'feeEstimate' => round((float) $o->total * 0.0004, 4),
                 ];
             });
 
@@ -47,17 +49,45 @@ class TradeController extends Controller
                     'side' => $o->side,
                     'type' => $o->type,
                     'price' => (float) $o->price,
+                    'avgPrice' => (float) $o->price,
                     'amount' => (float) $o->amount,
-                    'filled' => (float) $o->filled,
+                    'executed' => (float) $o->filled,
                     'total' => (float) $o->total,
                     'status' => $o->status,
                     'time' => $o->created_at->format('M d H:i'),
+                    'createdAt' => $o->created_at->format('Y-m-d H:i:s'),
+                    'updatedAt' => $o->updated_at->format('Y-m-d H:i:s'),
+                    'fee' => round((float) $o->total * 0.0004, 4),
+                    'feeAsset' => 'USDT',
+                ];
+            });
+
+        $tradeHistory = Transaction::where('user_id', $user->id)
+            ->whereIn('type', ['trade_buy', 'trade_sell'])
+            ->orderBy('created_at', 'desc')
+            ->get()
+            ->map(function ($t) {
+                $side = $t->type === 'trade_buy' ? 'buy' : 'sell';
+                $price = $t->amount > 0 ? round((float) $t->value_usd / (float) $t->amount, 2) : (float) $t->value_usd;
+                return [
+                    'id' => $t->id,
+                    'orderId' => 'ord-' . substr($t->id, -4),
+                    'pair' => $t->asset . '/USDT',
+                    'side' => $side,
+                    'execPrice' => $price,
+                    'amount' => (float) $t->amount,
+                    'totalValue' => (float) $t->value_usd,
+                    'fee' => (float) $t->fee_usd,
+                    'feeAsset' => 'USDT',
+                    'role' => 'taker',
+                    'dateTime' => $t->created_at->format('Y-m-d H:i:s'),
                 ];
             });
 
         return response()->json([
             'openOrders' => $openOrders,
             'orderHistory' => $orderHistory,
+            'tradeHistory' => $tradeHistory,
         ]);
     }
 

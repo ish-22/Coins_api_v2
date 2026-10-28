@@ -93,7 +93,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('notifications')->group(function () {
         Route::get('/', [NotificationController::class, 'list']);
         Route::put('/{id}/read', [NotificationController::class, 'markRead']);
+        Route::put('/{id}/toggle-read', [NotificationController::class, 'toggleRead']);
         Route::put('/read-all', [NotificationController::class, 'markAllRead']);
+        Route::delete('/{id}', [NotificationController::class, 'delete']);
+        Route::delete('/clear/read', [NotificationController::class, 'deleteRead']);
     });
 
     // Customer Support Desk

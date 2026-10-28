@@ -101,4 +101,56 @@ class CoinPlusApiTest extends TestCase
         $user->refresh();
         $this->assertSame('active', $user->status);
     }
+
+    public function test_user_can_get_orders_and_place_and_cancel(): void
+    {
+        $user = User::where('email', 'demo.trader@coinplus.io')->first();
+
+        // 1. Get orders
+        $getRes = $this->actingAs($user)->getJson('/api/trade/orders');
+        $getRes->assertStatus(200)
+            ->assertJsonStructure(['openOrders', 'orderHistory', 'tradeHistory']);
+
+        // 2. Place limit buy order
+        $placeRes = $this->actingAs($user)->postJson('/api/trade/orders', [
+            'pair' => 'BTC/USDT',
+            'side' => 'buy',
+            'type' => 'limit',
+            'price' => 50000,
+            'amount' => 0.01,
+        ]);
+        $placeRes->assertStatus(201)
+            ->assertJsonStructure(['order' => ['id', 'pair', 'side', 'type', 'price', 'amount', 'status']]);
+
+        $orderId = $placeRes->json('order.id');
+
+        // 3. Cancel the placed order
+        $cancelRes = $this->actingAs($user)->postJson("/api/trade/orders/{$orderId}/cancel");
+        $cancelRes->assertStatus(200)
+            ->assertJsonFragment(['status' => 'cancelled']);
+    }
+
+    public function test_user_notifications_flow(): void
+    {
+        $user = User::where('email', 'demo.trader@coinplus.io')->first();
+
+        // 1. List notifications from DB
+        $listRes = $this->actingAs($user)->getJson('/api/notifications');
+        $listRes->assertStatus(200)
+            ->assertJsonStructure(['notifications' => [['id', 'title', 'message', 'category', 'isRead']]]);
+
+        $firstId = $listRes->json('notifications.0.id');
+
+        // 2. Toggle read status
+        $toggleRes = $this->actingAs($user)->putJson("/api/notifications/{$firstId}/toggle-read");
+        $toggleRes->assertStatus(200)
+            ->assertJsonFragment(['success' => true]);
+
+        // 3. Mark all read
+        $markAllRes = $this->actingAs($user)->putJson('/api/notifications/read-all');
+        $markAllRes->assertStatus(200)
+            ->assertJsonFragment(['success' => true]);
+    }
 }
+
+

@@ -116,7 +116,9 @@ Route::prefix('auth')->group(function () {
     Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
     Route::post('/admin-login', [AuthController::class, 'adminLogin'])->middleware('throttle:10,1');
     Route::post('/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:5,1');
+    Route::post('/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:10,1');
 });
+
 
 // ── Public Market Feeds ──
 Route::prefix('markets')->group(function () {

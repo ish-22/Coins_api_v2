@@ -80,15 +80,48 @@ class SupportController extends Controller
 
     public function submitContact(Request $request): JsonResponse
     {
-        $request->validate([
+        $validated = $request->validate([
             'name' => 'required|string',
             'email' => 'required|email',
+            'category' => 'nullable|string',
             'subject' => 'required|string',
             'message' => 'required|string',
         ]);
 
+        $referenceId = 'CP-INQ-' . rand(10000, 99999);
+
+        // Find existing user by email or fallback to demo trader / admin for foreign key if needed
+        $user = \App\Models\User::where('email', strtolower(trim($validated['email'])))->first() 
+            ?: \App\Models\User::where('email', 'demo.trader@coinplus.io')->first()
+            ?: \App\Models\User::first();
+
+        if ($user) {
+            $cat = in_array($validated['category'] ?? '', ['trading', 'account', 'deposits', 'withdrawals', 'kyc', 'security'])
+                ? $validated['category']
+                : 'account';
+
+            $ticket = SupportTicket::create([
+                'ticket_ref' => $referenceId,
+                'user_id' => $user->id,
+                'subject' => $validated['subject'],
+                'category' => $cat,
+                'priority' => 'medium',
+                'status' => 'open',
+            ]);
+
+            SupportMessage::create([
+                'support_ticket_id' => $ticket->id,
+                'sender_type' => 'user',
+                'sender_name' => $validated['name'],
+                'message' => $validated['message'],
+            ]);
+        }
+
         return response()->json([
+            'success' => true,
+            'referenceId' => $referenceId,
             'message' => 'Your message has been sent to the CoinPlus customer relations team.',
+            'timestamp' => now()->toIso8601String(),
         ]);
     }
 }

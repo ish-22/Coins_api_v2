@@ -62,21 +62,38 @@ class KycController extends Controller
     public function submitTier2(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'documentType' => ['required', 'string'],
-            'documentNumber' => ['required', 'string'],
+            'firstName' => ['nullable', 'string'],
+            'lastName' => ['nullable', 'string'],
+            'country' => ['nullable', 'string'],
+            'addressLine1' => ['nullable', 'string'],
+            'city' => ['nullable', 'string'],
+            'postalCode' => ['nullable', 'string'],
+            'documentType' => ['nullable', 'string'],
+            'documentNumber' => ['nullable', 'string'],
             'proofOfAddressType' => ['nullable', 'string'],
         ]);
 
         $user = $request->user();
+
+        // Update user profile address & names if provided
+        if (!empty($validated['firstName']) && !empty($validated['lastName'])) {
+            $user->full_name = trim($validated['firstName'] . ' ' . $validated['lastName']);
+            $user->name = $user->full_name;
+        }
+        if (!empty($validated['country'])) {
+            $user->country = $validated['country'];
+        }
+        $user->kyc_tier = 'Tier 2 (In Review)';
+        $user->save();
 
         $case = KycVerification::create([
             'case_ref' => 'KYC-' . rand(10000, 99999),
             'user_id' => $user->id,
             'tier' => 'Tier 2',
             'status' => 'in_review',
-            'document_type' => $validated['documentType'],
-            'document_number' => $validated['documentNumber'],
-            'proof_of_address_type' => $validated['proofOfAddressType'] ?? 'Bank Statement',
+            'document_type' => $validated['documentType'] ?? 'Passport',
+            'document_number' => $validated['documentNumber'] ?? ('DOC-' . rand(100000, 999999)),
+            'proof_of_address_type' => $validated['proofOfAddressType'] ?? 'Utility Bill',
             'id_front_path' => 'simulated_front.jpg',
             'id_back_path' => 'simulated_back.jpg',
             'proof_of_address_path' => 'simulated_poa.pdf',
@@ -84,7 +101,8 @@ class KycController extends Controller
 
         return response()->json([
             'case' => $case,
-            'message' => 'Tier 2 verification documents submitted. Review is in progress.',
+            'kycTier' => $user->kyc_tier,
+            'message' => 'Identity verification documents submitted. Compliance review is now in progress.',
         ], 201);
     }
 }

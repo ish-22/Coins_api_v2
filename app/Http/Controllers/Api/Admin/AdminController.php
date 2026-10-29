@@ -20,13 +20,30 @@ class AdminController extends Controller
 {
     public function getMetrics(): JsonResponse
     {
+        $volume24h = (float) Transaction::whereIn('type', ['trade_buy', 'trade_sell'])
+            ->where('created_at', '>=', now()->subHours(24))
+            ->sum('value_usd');
+
+        // Fallback to order total if trade transactions not yet logged
+        if ($volume24h <= 0) {
+            $volume24h = (float) Order::where('created_at', '>=', now()->subHours(24))->sum('total');
+        }
+
+        $totalDeposits = (float) Transaction::where('type', 'deposit')
+            ->where('status', 'completed')
+            ->sum('value_usd');
+
+        $totalWithdrawals = (float) Transaction::where('type', 'withdrawal')
+            ->where('status', 'completed')
+            ->sum('value_usd');
+
         return response()->json([
             'metrics' => [
                 'totalUsers' => User::count(),
                 'activeUsers24h' => User::where('status', 'active')->count(),
-                'volume24hUsd' => 14820940.50,
-                'totalDepositsUsd' => 8421090.00,
-                'totalWithdrawalsUsd' => 3120400.00,
+                'volume24hUsd' => round($volume24h, 2),
+                'totalDepositsUsd' => round($totalDeposits, 2),
+                'totalWithdrawalsUsd' => round($totalWithdrawals, 2),
                 'pendingKycCount' => KycVerification::where('status', 'in_review')->orWhere('status', 'pending')->count(),
                 'pendingWithdrawalsCount' => Transaction::where('type', 'withdrawal')->where('status', 'processing')->count(),
                 'openTicketsCount' => SupportTicket::where('status', 'open')->count(),
@@ -38,19 +55,28 @@ class AdminController extends Controller
 
     public function getUsers(Request $request): JsonResponse
     {
-        $users = User::orderBy('created_at', 'desc')->get()->map(function ($u) {
+        $users = User::with('wallets.asset')->orderBy('created_at', 'desc')->get()->map(function ($u) {
+            $totalBalanceUsd = 0;
+            if ($u->wallets) {
+                foreach ($u->wallets as $wallet) {
+                    $assetPrice = $wallet->asset ? (float) $wallet->asset->price_usd : 0;
+                    $totalBalanceUsd += ((float) $wallet->available_balance + (float) $wallet->locked_balance) * $assetPrice;
+                }
+            }
+
             return [
                 'id' => (string) $u->id,
                 'userRef' => $u->uid ?? ('UID-' . $u->id),
                 'name' => $u->full_name ?? $u->name,
                 'email' => $u->email,
+                'role' => $u->role ?? 'user',
                 'country' => $u->country ?? 'United States',
                 'countryCode' => $u->country_code ?? 'US',
                 'status' => $u->status,
                 'kycTier' => $u->kyc_tier,
-                'balanceUsd' => 48920.45,
+                'balanceUsd' => round($totalBalanceUsd, 2),
                 'registeredAt' => $u->created_at->format('M d, Y'),
-                'lastLogin' => 'Today, 08:12 UTC',
+                'lastLogin' => 'Active recently',
                 'twoFactorEnabled' => (bool) $u->two_factor_enabled,
                 'passkeysRegistered' => $u->passkeys_count > 0,
                 'ipAddress' => '127.0.0.1',
@@ -59,6 +85,171 @@ class AdminController extends Controller
 
         return response()->json([
             'users' => $users,
+        ]);
+    }
+
+    public function createUser(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
+            'password' => ['required', 'string', 'min:8'],
+            'role' => ['nullable', 'string', 'in:user,admin,operator'],
+            'status' => ['nullable', 'string', 'in:active,suspended,pending'],
+            'kyc_tier' => ['nullable', 'string'],
+            'country' => ['nullable', 'string'],
+            'initial_balance_usd' => ['nullable', 'numeric', 'min:0'],
+        ]);
+
+        $uid = 'CP-USR-' . rand(1000, 9999);
+        $user = User::create([
+            'uid' => $uid,
+            'name' => $validated['name'],
+            'display_name' => $validated['name'],
+            'full_name' => $validated['name'],
+            'email' => $validated['email'],
+            'password' => \Illuminate\Support\Facades\Hash::make($validated['password']),
+            'role' => $validated['role'] ?? 'user',
+            'status' => $validated['status'] ?? 'active',
+            'kyc_tier' => $validated['kyc_tier'] ?? 'Tier 1 (Basic Identity)',
+            'country' => $validated['country'] ?? 'United States',
+            'country_code' => 'US',
+        ]);
+
+        // If initial balance provided, credit USDT wallet
+        $initialUsdt = floatval($validated['initial_balance_usd'] ?? 0);
+        if ($initialUsdt > 0) {
+            \App\Models\Wallet::updateOrCreate(
+                ['user_id' => $user->id, 'asset_id' => 'tether'],
+                ['available_balance' => $initialUsdt, 'locked_balance' => 0]
+            );
+        }
+
+        AuditLog::create([
+            'event_id' => 'EVT-' . rand(1000, 9999),
+            'user_id' => $request->user()->id,
+            'admin_email' => $request->user()->email,
+            'admin_name' => $request->user()->name,
+            'action' => "User Account Created: {$user->email} ({$user->uid})",
+            'category' => 'User Management',
+            'ip_address' => $request->ip(),
+            'details' => "Administrative profile created for {$user->email} with role {$user->role}",
+        ]);
+
+        return response()->json([
+            'message' => 'User created successfully.',
+            'user' => [
+                'id' => (string) $user->id,
+                'userRef' => $user->uid,
+                'name' => $user->name,
+                'email' => $user->email,
+                'role' => $user->role,
+                'country' => $user->country,
+                'countryCode' => $user->country_code,
+                'status' => $user->status,
+                'kycTier' => $user->kyc_tier,
+                'balanceUsd' => $initialUsdt,
+                'registeredAt' => $user->created_at->format('M d, Y'),
+                'lastLogin' => 'Never',
+                'twoFactorEnabled' => false,
+                'passkeysRegistered' => false,
+                'ipAddress' => '127.0.0.1',
+            ],
+        ], 201);
+    }
+
+    public function updateUser(Request $request, int $id): JsonResponse
+    {
+        $user = User::findOrFail($id);
+
+        $validated = $request->validate([
+            'name' => ['nullable', 'string', 'max:255'],
+            'email' => ['nullable', 'string', 'email', 'max:255', 'unique:users,email,' . $user->id],
+            'password' => ['nullable', 'string', 'min:8'],
+            'role' => ['nullable', 'string', 'in:user,admin,operator'],
+            'status' => ['nullable', 'string', 'in:active,suspended,pending'],
+            'kyc_tier' => ['nullable', 'string'],
+            'country' => ['nullable', 'string'],
+            'balance_usd' => ['nullable', 'numeric', 'min:0'],
+        ]);
+
+        if (!empty($validated['name'])) {
+            $user->name = $validated['name'];
+            $user->full_name = $validated['name'];
+            $user->display_name = $validated['name'];
+        }
+        if (!empty($validated['email'])) {
+            $user->email = $validated['email'];
+        }
+        if (!empty($validated['password'])) {
+            $user->password = \Illuminate\Support\Facades\Hash::make($validated['password']);
+        }
+        if (isset($validated['role'])) {
+            $user->role = $validated['role'];
+        }
+        if (isset($validated['status'])) {
+            $user->status = $validated['status'];
+        }
+        if (isset($validated['kyc_tier'])) {
+            $user->kyc_tier = $validated['kyc_tier'];
+        }
+        if (isset($validated['country'])) {
+            $user->country = $validated['country'];
+        }
+        $user->save();
+
+        if (isset($validated['balance_usd'])) {
+            \App\Models\Wallet::updateOrCreate(
+                ['user_id' => $user->id, 'asset_id' => 'tether'],
+                ['available_balance' => floatval($validated['balance_usd'])]
+            );
+        }
+
+        AuditLog::create([
+            'event_id' => 'EVT-' . rand(1000, 9999),
+            'user_id' => $request->user()->id,
+            'admin_email' => $request->user()->email,
+            'admin_name' => $request->user()->name,
+            'action' => "User Profile Updated: {$user->email} ({$user->uid})",
+            'category' => 'User Management',
+            'ip_address' => $request->ip(),
+            'details' => "Administrative profile modification applied for {$user->email}",
+        ]);
+
+        return response()->json([
+            'message' => 'User profile updated successfully.',
+            'user' => $user,
+        ]);
+    }
+
+    public function deleteUser(Request $request, int $id): JsonResponse
+    {
+        $user = User::findOrFail($id);
+        $userEmail = $user->email;
+        $userUid = $user->uid;
+
+        // Prevent admin from deleting themselves
+        if ($request->user()->id === $user->id) {
+            return response()->json([
+                'message' => 'You cannot delete your own active administrative account.',
+            ], 422);
+        }
+
+        $user->delete();
+
+        AuditLog::create([
+            'event_id' => 'EVT-' . rand(1000, 9999),
+            'user_id' => $request->user()->id,
+            'admin_email' => $request->user()->email,
+            'admin_name' => $request->user()->name,
+            'action' => "User Purged: {$userEmail} ({$userUid})",
+            'category' => 'User Management',
+            'ip_address' => $request->ip(),
+            'details' => "Administrative deletion of user account {$userEmail}",
+        ]);
+
+        return response()->json([
+            'message' => "User {$userEmail} deleted successfully.",
         ]);
     }
 
@@ -189,6 +380,13 @@ class AdminController extends Controller
             ->orderBy('created_at', 'desc')
             ->get()
             ->map(function ($w) {
+                $statusDisplay = 'pending_review';
+                if ($w->status === 'completed') {
+                    $statusDisplay = 'approved';
+                } elseif ($w->status === 'failed') {
+                    $statusDisplay = 'rejected';
+                }
+
                 return [
                     'id' => (string) $w->id,
                     'withdrawalRef' => 'WTH-' . substr($w->id, -6),
@@ -201,13 +399,62 @@ class AdminController extends Controller
                     'fee' => (float) $w->fee_usd,
                     'destinationAddress' => $w->address ?? 'N/A',
                     'riskScore' => 'Low',
-                    'status' => $w->status === 'completed' ? 'approved' : 'pending_review',
+                    'status' => $statusDisplay,
+                    'rejectionReason' => $w->notes,
                     'createdAt' => $w->created_at->format('M d, Y H:i'),
                 ];
             });
 
         return response()->json([
             'withdrawals' => $withdrawals,
+        ]);
+    }
+
+    public function reviewWithdrawal(Request $request, string $id): JsonResponse
+    {
+        $validated = $request->validate([
+            'action' => ['required', 'in:approve,reject'],
+            'reason' => ['nullable', 'string'],
+        ]);
+
+        $tx = Transaction::where('id', $id)->firstOrFail();
+        if ($tx->type !== 'withdrawal') {
+            return response()->json(['message' => 'Transaction is not a withdrawal.'], 400);
+        }
+
+        if ($validated['action'] === 'approve') {
+            $tx->status = 'completed';
+            $tx->notes = $validated['reason'] ?? 'Approved by administrative compliance desk';
+        } else {
+            $tx->status = 'failed';
+            $tx->notes = $validated['reason'] ?? 'Rejected by administrative compliance desk';
+
+            // Refund user locked/available balance if failed
+            $assetObj = Asset::where('symbol', $tx->asset)->first();
+            $assetId = $assetObj ? $assetObj->id : strtolower($tx->asset);
+            $wallet = \App\Models\Wallet::where('user_id', $tx->user_id)->where('asset_id', $assetId)->first();
+            if ($wallet) {
+                $wallet->available_balance += floatval($tx->amount);
+                $wallet->save();
+            }
+        }
+
+        $tx->save();
+
+        AuditLog::create([
+            'event_id' => 'EVT-' . rand(1000, 9999),
+            'user_id' => $request->user()->id,
+            'admin_email' => $request->user()->email,
+            'admin_name' => $request->user()->name,
+            'action' => "Withdrawal {$tx->id} {$validated['action']}d",
+            'category' => 'Financial Operations',
+            'ip_address' => $request->ip(),
+            'details' => "Withdrawal request of {$tx->amount} {$tx->asset} reviewed with status {$tx->status}",
+        ]);
+
+        return response()->json([
+            'message' => "Withdrawal {$tx->id} " . ($validated['action'] === 'approve' ? 'approved' : 'rejected') . " successfully.",
+            'transaction' => $tx,
         ]);
     }
 
@@ -218,7 +465,7 @@ class AdminController extends Controller
                 'id' => (string) $o->id,
                 'orderRef' => $o->id,
                 'userId' => (string) $o->user_id,
-                'userName' => $o->user ? $o->user->name : 'Alex Vance',
+                'userName' => $o->user ? $o->user->name : 'Trader',
                 'pair' => $o->pair,
                 'side' => $o->side,
                 'type' => $o->type,
@@ -233,6 +480,29 @@ class AdminController extends Controller
 
         return response()->json([
             'orders' => $orders,
+        ]);
+    }
+
+    public function cancelOrderAdmin(Request $request, string $id): JsonResponse
+    {
+        $order = Order::where('id', $id)->firstOrFail();
+        $order->status = 'cancelled';
+        $order->save();
+
+        AuditLog::create([
+            'event_id' => 'EVT-' . rand(1000, 9999),
+            'user_id' => $request->user()->id,
+            'admin_email' => $request->user()->email,
+            'admin_name' => $request->user()->name,
+            'action' => "Order Cancelled by Admin: {$order->id}",
+            'category' => 'Exchange Trading',
+            'ip_address' => $request->ip(),
+            'details' => "Administrative order cancellation executed for {$order->pair} {$order->side}",
+        ]);
+
+        return response()->json([
+            'message' => "Order {$order->id} cancelled by administrative action.",
+            'order' => $order,
         ]);
     }
 
@@ -268,6 +538,34 @@ class AdminController extends Controller
         ], 201);
     }
 
+    public function updateAnnouncement(Request $request, int $id): JsonResponse
+    {
+        $announcement = Announcement::findOrFail($id);
+
+        $validated = $request->validate([
+            'title' => ['required', 'string', 'max:255'],
+            'content' => ['required', 'string'],
+            'type' => ['required', 'in:maintenance,feature,security,advisory'],
+            'targetAudience' => ['required', 'string'],
+            'status' => ['nullable', 'in:active,draft,archived'],
+            'validUntil' => ['nullable', 'string'],
+        ]);
+
+        $announcement->update([
+            'title' => $validated['title'],
+            'content' => $validated['content'],
+            'type' => $validated['type'],
+            'target_audience' => $validated['targetAudience'],
+            'status' => $validated['status'] ?? $announcement->status,
+            'valid_until' => $validated['validUntil'] ?? $announcement->valid_until,
+        ]);
+
+        return response()->json([
+            'announcement' => $announcement,
+            'message' => 'Announcement updated successfully.',
+        ]);
+    }
+
     public function deleteAnnouncement(int $id): JsonResponse
     {
         Announcement::findOrFail($id)->delete();
@@ -301,21 +599,67 @@ class AdminController extends Controller
         ]);
     }
 
+    public function createAsset(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'symbol' => ['required', 'string', 'max:16', 'unique:assets,symbol'],
+            'name' => ['required', 'string', 'max:64'],
+            'price_usd' => ['required', 'numeric', 'min:0'],
+            'networks' => ['nullable', 'array'],
+            'depositEnabled' => ['nullable', 'boolean'],
+            'withdrawEnabled' => ['nullable', 'boolean'],
+            'tradingEnabled' => ['nullable', 'boolean'],
+            'minDeposit' => ['nullable', 'numeric', 'min:0'],
+            'minWithdrawal' => ['nullable', 'numeric', 'min:0'],
+            'withdrawalFee' => ['nullable', 'numeric', 'min:0'],
+        ]);
+
+        $id = strtolower(trim($validated['symbol']));
+        $asset = Asset::create([
+            'id' => $id,
+            'symbol' => strtoupper($validated['symbol']),
+            'name' => $validated['name'],
+            'type' => 'crypto',
+            'price_usd' => $validated['price_usd'],
+            'change_24h' => 0.0,
+            'networks' => $validated['networks'] ?? ['Mainnet'],
+            'deposit_enabled' => $validated['depositEnabled'] ?? true,
+            'withdraw_enabled' => $validated['withdrawEnabled'] ?? true,
+            'trading_enabled' => $validated['tradingEnabled'] ?? true,
+            'min_deposit' => $validated['minDeposit'] ?? 0.001,
+            'min_withdrawal' => $validated['minWithdrawal'] ?? 0.002,
+            'withdrawal_fee' => $validated['withdrawalFee'] ?? 0.0005,
+        ]);
+
+        return response()->json([
+            'asset' => $asset,
+            'message' => "Asset {$asset->symbol} created successfully.",
+        ], 201);
+    }
+
     public function updateAsset(Request $request, string $id): JsonResponse
     {
         $asset = Asset::findOrFail($id);
 
         $validated = $request->validate([
+            'name' => ['nullable', 'string'],
+            'price_usd' => ['nullable', 'numeric'],
             'depositEnabled' => ['nullable', 'boolean'],
             'withdrawEnabled' => ['nullable', 'boolean'],
             'tradingEnabled' => ['nullable', 'boolean'],
             'withdrawalFee' => ['nullable', 'numeric'],
+            'minDeposit' => ['nullable', 'numeric'],
+            'minWithdrawal' => ['nullable', 'numeric'],
         ]);
 
+        if (isset($validated['name'])) $asset->name = $validated['name'];
+        if (isset($validated['price_usd'])) $asset->price_usd = $validated['price_usd'];
         if (isset($validated['depositEnabled'])) $asset->deposit_enabled = $validated['depositEnabled'];
         if (isset($validated['withdrawEnabled'])) $asset->withdraw_enabled = $validated['withdrawEnabled'];
         if (isset($validated['tradingEnabled'])) $asset->trading_enabled = $validated['tradingEnabled'];
         if (isset($validated['withdrawalFee'])) $asset->withdrawal_fee = $validated['withdrawalFee'];
+        if (isset($validated['minDeposit'])) $asset->min_deposit = $validated['minDeposit'];
+        if (isset($validated['minWithdrawal'])) $asset->min_withdrawal = $validated['minWithdrawal'];
 
         $asset->save();
 
@@ -325,10 +669,37 @@ class AdminController extends Controller
         ]);
     }
 
+    public function deleteAsset(string $id): JsonResponse
+    {
+        $asset = Asset::findOrFail($id);
+        $symbol = $asset->symbol;
+        $asset->delete();
+
+        return response()->json([
+            'message' => "Asset {$symbol} has been deleted.",
+        ]);
+    }
+
     public function getAuditLogs(): JsonResponse
     {
+        $logs = AuditLog::orderBy('created_at', 'desc')->take(50)->get()->map(function ($log) {
+            return [
+                'id' => (string) $log->id,
+                'eventId' => $log->event_id ?? 'EVT-' . $log->id,
+                'adminEmail' => $log->admin_email ?? 'operator@coinplus.io',
+                'adminName' => $log->admin_name ?? 'Chief Operator',
+                'action' => $log->action ?? 'System Event',
+                'category' => $log->category ?? 'System',
+                'target' => $log->user_id ? 'UID-' . $log->user_id : 'System Parameters',
+                'details' => $log->details ?? 'Administrative event executed.',
+                'timestamp' => $log->created_at ? $log->created_at->toIso8601String() : now()->toIso8601String(),
+                'result' => 'success',
+                'ipAddress' => $log->ip_address ?? '127.0.0.1',
+            ];
+        });
+
         return response()->json([
-            'logs' => AuditLog::orderBy('created_at', 'desc')->take(50)->get(),
+            'logs' => $logs,
         ]);
     }
 
@@ -395,6 +766,22 @@ class AdminController extends Controller
                 'created_at' => $msg->created_at,
             ],
         ], 201);
+    }
+
+    public function updateTicketStatus(Request $request, int $id): JsonResponse
+    {
+        $validated = $request->validate([
+            'status' => ['required', 'in:open,in_progress,waiting_user,resolved'],
+        ]);
+
+        $ticket = SupportTicket::findOrFail($id);
+        $ticket->status = $validated['status'];
+        $ticket->save();
+
+        return response()->json([
+            'message' => "Support ticket {$ticket->ticket_ref} status updated to {$ticket->status}.",
+            'ticket' => $ticket,
+        ]);
     }
 
     public function getSettings(): JsonResponse

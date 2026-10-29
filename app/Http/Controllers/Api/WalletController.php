@@ -249,17 +249,17 @@ class WalletController extends Controller
                 'amount' => $validated['amount'],
                 'value_usd' => $valUsd,
                 'fee_usd' => round($fee * $price, 2),
-                'status' => 'completed',
+                'status' => 'processing',
                 'tx_hash' => '0x' . bin2hex(random_bytes(20)),
                 'network' => $validated['network'],
                 'address' => $validated['address'],
-                'confirmations' => 'Dispatched',
-                'notes' => "Withdrawal to external address {$validated['address']}",
+                'confirmations' => 'Pending Review',
+                'notes' => "Withdrawal request submitted. Awaiting administrative approval.",
             ]);
 
             return response()->json([
                 'transaction' => $tx,
-                'message' => "Withdrawal request for {$validated['amount']} {$symbol} processed successfully.",
+                'message' => "Withdrawal request of {$validated['amount']} {$symbol} submitted and is awaiting administrative approval.",
             ], 201);
         });
     }

@@ -213,19 +213,44 @@ Route::middleware('auth:sanctum')->group(function () {
 // ── Administrative Console Routes (Admin Role Only) ──
 Route::middleware(['auth:sanctum', AdminMiddleware::class])->prefix('admin')->group(function () {
     Route::get('/metrics', [AdminController::class, 'getMetrics']);
+
+    // User CRUD & Management
     Route::get('/users', [AdminController::class, 'getUsers']);
+    Route::post('/users', [AdminController::class, 'createUser']);
+    Route::put('/users/{id}', [AdminController::class, 'updateUser']);
+    Route::delete('/users/{id}', [AdminController::class, 'deleteUser']);
     Route::put('/users/{id}/status', [AdminController::class, 'updateUserStatus']);
+
+    // KYC Management
     Route::get('/kyc', [AdminController::class, 'getKycCases']);
     Route::post('/kyc/{id}/review', [AdminController::class, 'reviewKycCase']);
+
+    // Financial Operations (Deposits & Withdrawals)
     Route::get('/deposits', [AdminController::class, 'getDeposits']);
     Route::get('/withdrawals', [AdminController::class, 'getWithdrawals']);
+    Route::post('/withdrawals/{id}/review', [AdminController::class, 'reviewWithdrawal']);
+
+    // Orders Management
     Route::get('/orders', [AdminController::class, 'getOrders']);
+    Route::delete('/orders/{id}', [AdminController::class, 'cancelOrderAdmin']);
+
+    // Announcements CRUD
     Route::post('/announcements', [AdminController::class, 'createAnnouncement']);
+    Route::put('/announcements/{id}', [AdminController::class, 'updateAnnouncement']);
     Route::delete('/announcements/{id}', [AdminController::class, 'deleteAnnouncement']);
+
+    // Assets CRUD
     Route::get('/assets', [AdminController::class, 'getAssets']);
+    Route::post('/assets', [AdminController::class, 'createAsset']);
     Route::put('/assets/{id}', [AdminController::class, 'updateAsset']);
+    Route::delete('/assets/{id}', [AdminController::class, 'deleteAsset']);
+
+    // Support Desk
     Route::get('/support-tickets', [AdminController::class, 'getSupportTickets']);
     Route::post('/support-tickets/{id}/reply', [AdminController::class, 'replySupportTicket']);
+    Route::put('/support-tickets/{id}/status', [AdminController::class, 'updateTicketStatus']);
+
+    // Audit & System Settings
     Route::get('/audit-logs', [AdminController::class, 'getAuditLogs']);
     Route::get('/settings', [AdminController::class, 'getSettings']);
     Route::put('/settings', [AdminController::class, 'updateSettings']);

@@ -18,13 +18,95 @@ use Illuminate\Support\Facades\Route;
 |--------------------------------------------------------------------------
 */
 
-// Platform Health Check
+// Platform Health & Infrastructure Telemetry Check
 Route::get('/health', function () {
     return response()->json([
         'status' => 'operational',
         'timestamp' => now()->toIso8601String(),
         'platform' => 'CoinPlus Institutional Exchange',
         'database' => 'connected',
+    ]);
+});
+
+Route::get('/system-status', function () {
+    $dbConnected = true;
+    try {
+        \Illuminate\Support\Facades\DB::connection()->getPdo();
+    } catch (\Throwable $e) {
+        $dbConnected = false;
+    }
+
+    $services = \App\Models\SystemService::orderBy('sort_order', 'asc')->get()->map(function ($s) {
+        return [
+            'id' => $s->service_id,
+            'name' => $s->name,
+            'category' => $s->category,
+            'status' => $s->status,
+            'description' => $s->description,
+            'simulatedUptime' => $s->uptime,
+            'simulatedLatency' => $s->latency,
+            'dailyUptimeHistory' => $s->daily_uptime_history ?: array_fill(0, 30, 'operational'),
+        ];
+    });
+
+    $incidents = \App\Models\Incident::orderBy('created_at', 'desc')->get()->map(function ($inc) {
+        return [
+            'id' => $inc->incident_id,
+            'title' => $inc->title,
+            'date' => $inc->date_display,
+            'severity' => $inc->severity,
+            'status' => $inc->status,
+            'affectedServices' => $inc->affected_services ?: [],
+            'description' => $inc->description,
+            'resolutionSummary' => $inc->resolution_summary,
+            'updates' => $inc->updates ?: [],
+        ];
+    });
+
+    $activeAnnouncements = \App\Models\Announcement::where('type', 'maintenance')
+        ->where('status', 'active')
+        ->get();
+
+    return response()->json([
+        'overallStatus' => $dbConnected ? 'operational' : 'degraded',
+        'timestamp' => now()->toIso8601String(),
+        'services' => $services,
+        'incidents' => $incidents,
+        'announcements' => $activeAnnouncements,
+    ]);
+});
+
+Route::get('/fees', function () {
+    $assets = \App\Models\Asset::all()->map(function ($a) {
+        return [
+            'id' => strtolower($a->symbol),
+            'name' => $a->name,
+            'symbol' => $a->symbol,
+            'network' => $a->network ?? 'Mainnet',
+            'depositFee' => '0.00 % (Free)',
+            'minDeposit' => '0.0001 ' . $a->symbol,
+            'withdrawalFee' => $a->withdrawal_fee . ' ' . $a->symbol,
+            'minWithdrawal' => (floatval($a->withdrawal_fee) * 2) . ' ' . $a->symbol,
+            'status' => 'Active',
+        ];
+    });
+
+    return response()->json([
+        'makerTakerTiers' => [
+            ['tier' => 'VIP 0', 'volume30d' => '< $10,000', 'maker' => '0.100%', 'taker' => '0.100%'],
+            ['tier' => 'VIP 1', 'volume30d' => '≥ $10,000', 'maker' => '0.080%', 'taker' => '0.090%'],
+            ['tier' => 'VIP 2', 'volume30d' => '≥ $50,000', 'maker' => '0.060%', 'taker' => '0.080%'],
+            ['tier' => 'VIP 3', 'volume30d' => '≥ $250,000', 'maker' => '0.040%', 'taker' => '0.060%'],
+            ['tier' => 'VIP 4', 'volume30d' => '≥ $1,000,000', 'maker' => '0.020%', 'taker' => '0.040%'],
+            ['tier' => 'Institutional', 'volume30d' => '≥ $10,000,000', 'maker' => '0.000%', 'taker' => '0.020%'],
+        ],
+        'assets' => $assets,
+        'limits' => [
+            ['tier' => 'Tier 0 (Unverified)', 'dailyLimit' => '$0 USD', 'monthlyLimit' => '$0 USD', 'fiatSupport' => 'Disabled'],
+            ['tier' => 'Tier 1 (Basic Identity)', 'dailyLimit' => '$10,000 USD', 'monthlyLimit' => '$100,000 USD', 'fiatSupport' => 'Cryptocurrency Only'],
+            ['tier' => 'Tier 2 (Full KYC Verified)', 'dailyLimit' => '$500,000 USD', 'monthlyLimit' => '$5,000,000 USD', 'fiatSupport' => 'Full Bank Wire / SEPA'],
+            ['tier' => 'Tier 3 (Institutional Corporate)', 'dailyLimit' => 'Unlimited', 'monthlyLimit' => 'Unlimited', 'fiatSupport' => 'Dedicated Prime Brokerage'],
+        ],
     ]);
 });
 
@@ -45,6 +127,25 @@ Route::prefix('markets')->group(function () {
 });
 
 // ── Public Informational & Inquiries ──
+Route::get('/about', function () {
+    $aboutSetting = \App\Models\SystemSetting::where('key', 'about_content')->first();
+    if ($aboutSetting && !empty($aboutSetting->value)) {
+        return response()->json($aboutSetting->value);
+    }
+
+    return response()->json([
+        'brand_values' => [
+            'platformName' => 'CoinPlus',
+            'tagline' => 'Precision Cryptocurrency Exchange Interface',
+            'conceptDefinition' => 'CoinPlus is a conceptual next-generation cryptocurrency trading platform engineered to unite institutional-grade market depth, sub-millisecond visual latency, and transparent fee architecture in a modern black-and-gold design system.',
+            'mission' => 'To establish a cleaner, more reliable standard for digital asset trading interfaces — removing visual clutter, eliminating hidden costs, and presenting real-time market data with utmost visual clarity.',
+            'vision' => 'A financial ecosystem where traders at every experience level enjoy equal access to professional order books, transparent liquidity routing, and frictionless asset management without cognitive overload.',
+        ],
+        'features' => [],
+        'principles' => [],
+        'faqs' => [],
+    ]);
+});
 Route::get('/announcements', [AdminController::class, 'getAnnouncements']);
 Route::post('/support/contact', [SupportController::class, 'submitContact'])->middleware('throttle:5,1');
 Route::get('/wallet/deposit/address', [WalletController::class, 'getDepositAddress']);

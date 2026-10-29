@@ -591,6 +591,116 @@ class CoinPlusSeeder extends Seeder
             ]
         );
 
+        SystemSetting::updateOrCreate(
+            ['key' => 'about_content'],
+            [
+                'value' => [
+                    'brand_values' => [
+                        'platformName' => 'CoinPlus',
+                        'tagline' => 'Precision Cryptocurrency Exchange Interface',
+                        'conceptDefinition' => 'CoinPlus is a conceptual next-generation cryptocurrency trading platform engineered to unite institutional-grade market depth, sub-millisecond visual latency, and transparent fee architecture in a modern black-and-gold design system.',
+                        'mission' => 'To establish a cleaner, more reliable standard for digital asset trading interfaces — removing visual clutter, eliminating hidden costs, and presenting real-time market data with utmost visual clarity.',
+                        'vision' => 'A financial ecosystem where traders at every experience level enjoy equal access to professional order books, transparent liquidity routing, and frictionless asset management without cognitive overload.',
+                    ],
+                    'features' => [
+                        [
+                            'id' => 'market-intel',
+                            'title' => 'Real-Time Market Intelligence',
+                            'subtitle' => 'High-Density Live Pricing & Metrics',
+                            'description' => 'Continuous price updates, 24-hour volume distribution, dynamic SVG sparklines, and filterable gainers/losers rankings across leading cryptocurrency assets including BTC, ETH, SOL, BNB, and XRP.',
+                            'iconName' => 'TrendingUp',
+                            'tags' => ['Live Sparklines', '24h Volume', 'Market Dominance'],
+                            'routeHref' => '/markets',
+                        ],
+                        [
+                            'id' => 'trading-terminal',
+                            'title' => 'Advanced Trading Terminal',
+                            'subtitle' => 'Institutional Order Book Depth',
+                            'description' => 'Multi-timeframe candlestick engine with volume histograms, interactive depth ladders, limit/market/stop-limit order types, and real-time trade execution simulation.',
+                            'iconName' => 'BarChart3',
+                            'tags' => ['Multi-Timeframe', 'Depth Ladder', 'Stop-Limit Orders'],
+                            'routeHref' => '/trade',
+                        ],
+                        [
+                            'id' => 'asset-custody',
+                            'title' => 'Comprehensive Asset Overview',
+                            'subtitle' => 'Portfolio Valuation & Allocation',
+                            'description' => 'Detailed balance tracking, portfolio asset distribution charts, available vs. locked balance distinctions, and comprehensive deposit/withdrawal history logging.',
+                            'iconName' => 'Wallet',
+                            'tags' => ['Portfolio Allocation', 'Locked Balances', 'Audit Trails'],
+                            'routeHref' => '/wallet',
+                        ],
+                        [
+                            'id' => 'account-tools',
+                            'title' => 'Account & Compliance Tools',
+                            'subtitle' => 'Tiered Limits & Fee Discounter',
+                            'description' => 'Transparent verification workflows, tiered daily withdrawal quotas up to 100 BTC, personalized regional preferences, and VIP fee discount milestones.',
+                            'iconName' => 'UserCheck',
+                            'tags' => ['Tiered KYC', 'VIP Discounts', 'Session Timeout'],
+                            'routeHref' => '/account',
+                        ],
+                        [
+                            'id' => 'security-design',
+                            'title' => 'Security-First Architecture',
+                            'subtitle' => 'FIDO2 Passkeys & Allowlisting',
+                            'description' => 'Biometric authentication via WebAuthn passkeys, two-factor authentication (TOTP), withdrawal address allowlists, and automated suspicious session detection.',
+                            'iconName' => 'ShieldCheck',
+                            'tags' => ['FIDO2 Passkeys', '2FA TOTP', 'Address Allowlist'],
+                            'routeHref' => '/settings',
+                        ],
+                    ],
+                    'principles' => [
+                        [
+                            'id' => 'clarity',
+                            'title' => 'Information Clarity',
+                            'lead' => 'High signal, zero unnecessary noise.',
+                            'description' => 'Every decimal point, order depth layer, and status indicator is intentionally positioned to maximize readability in fast-moving market conditions.',
+                            'badgeText' => 'Legibility First',
+                        ],
+                        [
+                            'id' => 'usability',
+                            'title' => 'Fluid Usability',
+                            'lead' => 'Desktop power meets mobile precision.',
+                            'description' => 'Engineered with responsive layouts, touch-friendly touch targets (≥44px), and adaptive table drawers that prevent accidental mis-clicks.',
+                            'badgeText' => 'Responsive Design',
+                        ],
+                        [
+                            'id' => 'transparency',
+                            'title' => 'Upfront Transparency',
+                            'lead' => 'No hidden spreads or ambiguous fees.',
+                            'description' => 'Transparent maker/taker fee tiers, clear blockchain network gas breakdowns, and accessible fee calculators ensure traders know costs in advance.',
+                            'badgeText' => 'Transparent Limits',
+                        ],
+                        [
+                            'id' => 'responsible',
+                            'title' => 'Responsible Access',
+                            'lead' => 'Safety warnings and environment boundaries.',
+                            'description' => 'Unambiguous demonstration notices, two-step withdrawal reviews, and strict simulated boundaries ensure safe exploration without risk to real capital.',
+                            'badgeText' => 'Safety Conscious',
+                        ],
+                    ],
+                    'faqs' => [
+                        [
+                            'question' => 'What is CoinPlus and how does it operate?',
+                            'answer' => 'CoinPlus is a cryptocurrency trading platform design and technology showcase. It demonstrates how modern exchange frontends can provide institutional order book depth, responsive charts, and transparent fee architectures in a secure demonstration environment.',
+                        ],
+                        [
+                            'question' => 'Are the order books and trades connected to real live blockchains?',
+                            'answer' => 'No. In this version, all price feeds, order books, and transactions are simulated demonstration data. No real cryptocurrencies or fiat funds are deposited, withdrawn, or traded.',
+                        ],
+                        [
+                            'question' => 'What security standards are demonstrated in CoinPlus?',
+                            'answer' => 'CoinPlus models industry security patterns including FIDO2/WebAuthn biometric passkeys, Google Authenticator 2FA, withdrawal address allowlists, session revocation, and tiered identity verification.',
+                        ],
+                        [
+                            'question' => 'Can I test all platform features without creating an external account?',
+                            'answer' => 'Yes! You can explore all routes, including Live Markets, the Trading Terminal, Deposit/Withdraw simulators, and the Settings suite directly in your browser.',
+                        ],
+                    ],
+                ],
+            ]
+        );
+
         // 13. Seed Audit Log
         AuditLog::create([
             'event_id' => 'EVT-9901',
@@ -602,5 +712,146 @@ class CoinPlusSeeder extends Seeder
             'ip_address' => '127.0.0.1',
             'details' => 'CoinPlus platform database schema migrated and initial seeders loaded.',
         ]);
+
+        // 14. Seed System Services Telemetry
+        $services = [
+            [
+                'service_id' => 'public-website',
+                'name' => 'Public Website & Web Portal',
+                'category' => 'core',
+                'status' => 'operational',
+                'description' => 'Public landing pages, marketing portal, and institutional brand showcase',
+                'uptime' => '99.99%',
+                'latency' => '18ms',
+                'daily_uptime_history' => array_fill(0, 30, 'operational'),
+                'sort_order' => 1,
+            ],
+            [
+                'service_id' => 'user-dashboard',
+                'name' => 'User Account & Portfolio Dashboard',
+                'category' => 'core',
+                'status' => 'operational',
+                'description' => 'Personalized portfolio cards, analytics chart engine, and asset balances',
+                'uptime' => '99.98%',
+                'latency' => '24ms',
+                'daily_uptime_history' => array_fill(0, 30, 'operational'),
+                'sort_order' => 2,
+            ],
+            [
+                'service_id' => 'markets-interface',
+                'name' => 'Live Markets Depth & Order Book Feed',
+                'category' => 'trading',
+                'status' => 'operational',
+                'description' => 'Real-time spot price ticker streaming, 24h volume calculations, and sparklines',
+                'uptime' => '99.95%',
+                'latency' => '31ms',
+                'daily_uptime_history' => array_merge(array_fill(0, 15, 'operational'), ['degraded'], array_fill(0, 14, 'operational')),
+                'sort_order' => 3,
+            ],
+            [
+                'service_id' => 'trading-interface',
+                'name' => 'Spot Order Matching Engine',
+                'category' => 'trading',
+                'status' => 'operational',
+                'description' => 'High-frequency spot order book depth ladder, candlestick charting, and order execution',
+                'uptime' => '99.99%',
+                'latency' => '12ms',
+                'daily_uptime_history' => array_fill(0, 30, 'operational'),
+                'sort_order' => 4,
+            ],
+            [
+                'service_id' => 'wallet-interface',
+                'name' => 'Treasury, Deposit & Custody Gateway',
+                'category' => 'finance',
+                'status' => 'operational',
+                'description' => 'Cryptocurrency on-ramp deposit generation, simulated network gas fees, and withdrawals',
+                'uptime' => '99.92%',
+                'latency' => '45ms',
+                'daily_uptime_history' => array_merge(array_fill(0, 21, 'operational'), ['degraded'], array_fill(0, 8, 'operational')),
+                'sort_order' => 5,
+            ],
+            [
+                'service_id' => 'account-services',
+                'name' => 'Identity (KYC) & Security Gatekeeper',
+                'category' => 'core',
+                'status' => 'operational',
+                'description' => 'Automated KYC verification, biometric passkey authentications, and AML scanners',
+                'uptime' => '99.99%',
+                'latency' => '22ms',
+                'daily_uptime_history' => array_fill(0, 30, 'operational'),
+                'sort_order' => 6,
+            ],
+            [
+                'service_id' => 'support-centre',
+                'name' => 'Customer Relations & Help Desk API',
+                'category' => 'support',
+                'status' => 'operational',
+                'description' => 'Customer relations ticketing desk, real-time message exchange, and knowledgebase',
+                'uptime' => '99.99%',
+                'latency' => '19ms',
+                'daily_uptime_history' => array_fill(0, 30, 'operational'),
+                'sort_order' => 7,
+            ],
+        ];
+
+        foreach ($services as $srv) {
+            \App\Models\SystemService::updateOrCreate(
+                ['service_id' => $srv['service_id']],
+                $srv
+            );
+        }
+
+        // 15. Seed Incident History
+        $incidents = [
+            [
+                'incident_id' => 'inc-2026-10-14',
+                'title' => 'Scheduled WebSocket Edge Gateway Scale-out',
+                'date_display' => 'October 14, 2026',
+                'severity' => 'minor',
+                'status' => 'resolved',
+                'affected_services' => ['markets-interface', 'trading-interface'],
+                'description' => 'Periodic cluster re-balancing and container auto-scale expansion for high-throughput WebSocket price pushers.',
+                'resolution_summary' => 'All nodes updated successfully without client connection drops. Network latency normalized under 15ms.',
+                'updates' => [
+                    [
+                        'id' => 'upd-1',
+                        'timestamp' => '10:45 AM UTC',
+                        'status' => 'resolved',
+                        'message' => 'Node re-balancing concluded. All health probes green.',
+                    ],
+                    [
+                        'id' => 'upd-2',
+                        'timestamp' => '10:15 AM UTC',
+                        'status' => 'monitoring',
+                        'message' => 'Traffic routed to newly scaled gateway pods.',
+                    ],
+                ],
+            ],
+            [
+                'incident_id' => 'inc-2026-10-06',
+                'title' => 'Hot Wallet Node Re-synchronization',
+                'date_display' => 'October 06, 2026',
+                'severity' => 'maintenance',
+                'status' => 'resolved',
+                'affected_services' => ['wallet-interface'],
+                'description' => 'Routine ledger pruning and UTXO balance re-indexing on internal custody signer nodes.',
+                'resolution_summary' => 'Node synchronizations concluded cleanly. Deposit addresses and withdrawal queues operating at nominal throughput.',
+                'updates' => [
+                    [
+                        'id' => 'upd-3',
+                        'timestamp' => '04:30 AM UTC',
+                        'status' => 'resolved',
+                        'message' => 'Signer nodes synched to current block height.',
+                    ],
+                ],
+            ],
+        ];
+
+        foreach ($incidents as $inc) {
+            \App\Models\Incident::updateOrCreate(
+                ['incident_id' => $inc['incident_id']],
+                $inc
+            );
+        }
     }
 }

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Asset;
 use App\Models\Order;
 use App\Models\TradingPair;
 use App\Models\Transaction;
@@ -106,6 +107,13 @@ class TradeController extends Controller
         $parts = explode('/', $pairSymbol);
         $baseAssetSymbol = $parts[0] ?? 'BTC';
         $quoteAssetSymbol = $parts[1] ?? 'USDT';
+
+        $baseAsset = Asset::where('symbol', $baseAssetSymbol)->first();
+        if ($baseAsset && isset($baseAsset->trading_enabled) && ! $baseAsset->trading_enabled) {
+            return response()->json([
+                'message' => "Trading for {$baseAssetSymbol} is currently suspended by exchange management.",
+            ], 422);
+        }
 
         $total = round($validated['price'] * $validated['amount'], 4);
 

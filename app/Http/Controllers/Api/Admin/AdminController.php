@@ -429,12 +429,13 @@ class AdminController extends Controller
             $tx->status = 'failed';
             $tx->notes = $validated['reason'] ?? 'Rejected by administrative compliance desk';
 
-            // Refund user locked/available balance if failed
+            // Refund user balance (amount + fee) if failed
             $assetObj = Asset::where('symbol', $tx->asset)->first();
             $assetId = $assetObj ? $assetObj->id : strtolower($tx->asset);
+            $feeRefund = $assetObj ? (float) $assetObj->withdrawal_fee : 0;
             $wallet = \App\Models\Wallet::where('user_id', $tx->user_id)->where('asset_id', $assetId)->first();
             if ($wallet) {
-                $wallet->available_balance += floatval($tx->amount);
+                $wallet->available_balance += (floatval($tx->amount) + $feeRefund);
                 $wallet->save();
             }
         }
@@ -486,6 +487,35 @@ class AdminController extends Controller
     public function cancelOrderAdmin(Request $request, string $id): JsonResponse
     {
         $order = Order::where('id', $id)->firstOrFail();
+
+        if ($order->status === 'open') {
+            $parts = explode('/', $order->pair);
+            $baseAssetSymbol = $parts[0] ?? 'BTC';
+            $quoteAssetSymbol = $parts[1] ?? 'USDT';
+
+            if ($order->side === 'buy') {
+                $quoteWallet = \App\Models\Wallet::where('user_id', $order->user_id)
+                    ->whereHas('asset', fn ($q) => $q->where('symbol', $quoteAssetSymbol))
+                    ->first();
+                if ($quoteWallet) {
+                    $refund = (float) $order->total;
+                    $quoteWallet->locked_balance = max(0, (float) $quoteWallet->locked_balance - $refund);
+                    $quoteWallet->available_balance += $refund;
+                    $quoteWallet->save();
+                }
+            } else {
+                $baseWallet = \App\Models\Wallet::where('user_id', $order->user_id)
+                    ->whereHas('asset', fn ($q) => $q->where('symbol', $baseAssetSymbol))
+                    ->first();
+                if ($baseWallet) {
+                    $refund = (float) $order->amount;
+                    $baseWallet->locked_balance = max(0, (float) $baseWallet->locked_balance - $refund);
+                    $baseWallet->available_balance += $refund;
+                    $baseWallet->save();
+                }
+            }
+        }
+
         $order->status = 'cancelled';
         $order->save();
 

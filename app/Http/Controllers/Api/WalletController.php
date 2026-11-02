@@ -172,6 +172,12 @@ class WalletController extends Controller
 
         return DB::transaction(function () use ($user, $symbol, $validated) {
             $asset = Asset::where('symbol', $symbol)->firstOrFail();
+            if (isset($asset->deposit_enabled) && ! $asset->deposit_enabled) {
+                return response()->json([
+                    'message' => "Deposits for {$symbol} are temporarily disabled by platform administration.",
+                ], 422);
+            }
+
             $wallet = Wallet::firstOrCreate(
                 ['user_id' => $user->id, 'asset_id' => $asset->id],
                 ['available_balance' => 0, 'locked_balance' => 0]
@@ -222,6 +228,18 @@ class WalletController extends Controller
 
         return DB::transaction(function () use ($user, $symbol, $validated) {
             $asset = Asset::where('symbol', $symbol)->firstOrFail();
+            if (isset($asset->withdraw_enabled) && ! $asset->withdraw_enabled) {
+                return response()->json([
+                    'message' => "Withdrawals for {$symbol} are temporarily suspended by platform administration.",
+                ], 422);
+            }
+
+            if (isset($asset->min_withdrawal) && $validated['amount'] < (float) $asset->min_withdrawal) {
+                return response()->json([
+                    'message' => "Minimum withdrawal amount is {$asset->min_withdrawal} {$symbol}.",
+                ], 422);
+            }
+
             $wallet = Wallet::where('user_id', $user->id)
                 ->where('asset_id', $asset->id)
                 ->first();

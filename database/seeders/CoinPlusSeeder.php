@@ -34,7 +34,7 @@ class CoinPlusSeeder extends Seeder
                 'name' => 'System Operator',
                 'display_name' => 'CoinPlus Operator',
                 'full_name' => 'CoinPlus Super Administrator',
-                'password' => Hash::make('SuperAdmin2026!#'),
+                'password' => Hash::make('CoinPlus2026!#'),
                 'phone' => '+1 555-010-0001',
                 'country' => 'United States',
                 'country_code' => 'US',

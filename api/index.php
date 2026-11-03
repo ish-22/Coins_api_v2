@@ -23,3 +23,4 @@ if (isset($_ENV['VERCEL']) || isset($_SERVER['VERCEL']) || getenv('VERCEL')) {
 
 // Forward to standard Laravel entry point
 require __DIR__ . '/../public/index.php';
+

@@ -5,7 +5,7 @@ use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
 
-return Application::configure(basePath: dirname(__DIR__))
+$app = Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
         web: __DIR__.'/../routes/web.php',
         api: __DIR__.'/../routes/api.php',
@@ -25,3 +25,17 @@ return Application::configure(basePath: dirname(__DIR__))
             return $request->expectsJson();
         });
     })->create();
+
+/*
+|--------------------------------------------------------------------------
+| Support for Serverless Deployment (Vercel)
+|--------------------------------------------------------------------------
+| Vercel provides a read-only filesystem except for /tmp.
+| We redirect the storage directory to /tmp/storage so Laravel can write
+| cache, sessions, views, and logs without filesystem permission errors.
+*/
+if (isset($_ENV['VERCEL']) || isset($_SERVER['VERCEL']) || env('VERCEL')) {
+    $app->useStoragePath('/tmp/storage');
+}
+
+return $app;

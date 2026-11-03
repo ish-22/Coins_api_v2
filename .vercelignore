@@ -1,0 +1,7 @@
+.git
+.github
+tests
+phpunit.xml
+.phpunit.cache
+.phpunit.result.cache
+node_modules

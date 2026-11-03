@@ -76,6 +76,39 @@ Route::get('/system-status', function () {
     ]);
 });
 
+// Serverless Database Migration Trigger (Protected by APP_KEY)
+Route::get('/system/migrate', function (\Illuminate\Http\Request $request) {
+    $providedKey = $request->query('key');
+    $configuredKey = config('app.key');
+
+    if (empty($providedKey) || $providedKey !== $configuredKey) {
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Unauthorized. Provide valid management key (?key=YOUR_APP_KEY).'
+        ], 403);
+    }
+
+    try {
+        $seed = $request->boolean('seed', false);
+        $exitCode = \Illuminate\Support\Facades\Artisan::call('migrate', [
+            '--force' => true,
+            '--seed' => $seed,
+        ]);
+        $output = \Illuminate\Support\Facades\Artisan::output();
+
+        return response()->json([
+            'status' => 'success',
+            'exitCode' => $exitCode,
+            'output' => $output,
+        ]);
+    } catch (\Throwable $e) {
+        return response()->json([
+            'status' => 'failed',
+            'error' => $e->getMessage(),
+        ], 500);
+    }
+});
+
 Route::get('/fees', function () {
     $assets = \App\Models\Asset::all()->map(function ($a) {
         return [

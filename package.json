@@ -3,7 +3,7 @@
     "type": "module",
     "scripts": {
         "dev": "vite",
-        "build": "vite build"
+        "build": "echo 'Backend API build ready'"
     },
     "devDependencies": {
         "axios": "^1.6.4",

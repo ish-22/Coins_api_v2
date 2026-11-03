@@ -1,5 +1,9 @@
 <?php
 
+// Fix Symfony baseUrl stripping '/api' caused by script path /api/index.php
+$_SERVER['SCRIPT_NAME'] = '/index.php';
+$_SERVER['PHP_SELF'] = '/index.php';
+
 // Ensure serverless storage folders exist in /tmp
 if (isset($_ENV['VERCEL']) || isset($_SERVER['VERCEL']) || getenv('VERCEL')) {
     $paths = [
@@ -23,4 +27,3 @@ if (isset($_ENV['VERCEL']) || isset($_SERVER['VERCEL']) || getenv('VERCEL')) {
 
 // Forward to standard Laravel entry point
 require __DIR__ . '/../public/index.php';
-

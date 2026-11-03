@@ -58,7 +58,8 @@ return [
             'engine' => null,
             'options' => extension_loaded('pdo_mysql') ? array_filter([
                 PDO::MYSQL_ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
-            ]) : [],
+                PDO::ATTR_TIMEOUT => 3,
+            ]) : [PDO::ATTR_TIMEOUT => 3],
         ],
 
         'mariadb' => [
@@ -78,7 +79,8 @@ return [
             'engine' => null,
             'options' => extension_loaded('pdo_mysql') ? array_filter([
                 PDO::MYSQL_ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
-            ]) : [],
+                PDO::ATTR_TIMEOUT => 3,
+            ]) : [PDO::ATTR_TIMEOUT => 3],
         ],
 
         'pgsql' => [
@@ -94,6 +96,9 @@ return [
             'prefix_indexes' => true,
             'search_path' => 'public',
             'sslmode' => env('DB_SSLMODE', 'prefer'),
+            'options' => [
+                PDO::ATTR_TIMEOUT => 3,
+            ],
         ],
 
         'sqlsrv' => [

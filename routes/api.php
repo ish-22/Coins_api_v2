@@ -20,11 +20,26 @@ use Illuminate\Support\Facades\Route;
 
 // Platform Health & Infrastructure Telemetry Check
 Route::get('/health', function () {
+    $hasPostgres = !empty(env('POSTGRES_URL')) || !empty(env('POSTGRES_PRISMA_URL'));
+    $dbDriver = config('database.default');
+    $dbConnected = false;
+    $dbError = null;
+
+    try {
+        \Illuminate\Support\Facades\DB::connection()->getPdo();
+        $dbConnected = true;
+    } catch (\Throwable $e) {
+        $dbError = $e->getMessage();
+    }
+
     return response()->json([
         'status' => 'operational',
         'timestamp' => now()->toIso8601String(),
         'platform' => 'CoinPlus Institutional Exchange',
-        'database' => 'connected',
+        'postgres_detected' => $hasPostgres,
+        'database_driver' => $dbDriver,
+        'database_connected' => $dbConnected,
+        'database_error' => $dbError,
     ]);
 });
 
@@ -81,7 +96,10 @@ Route::get('/system/migrate', function (\Illuminate\Http\Request $request) {
     $providedKey = $request->query('key');
     $configuredKey = config('app.key');
 
-    if (empty($providedKey) || $providedKey !== $configuredKey) {
+    $normProvided = str_replace(' ', '+', trim((string)$providedKey));
+    $normConfigured = str_replace(' ', '+', trim((string)$configuredKey));
+
+    if (empty($providedKey) || ($providedKey !== $configuredKey && $normProvided !== $normConfigured)) {
         return response()->json([
             'status' => 'error',
             'message' => 'Unauthorized. Provide valid management key (?key=YOUR_APP_KEY).'

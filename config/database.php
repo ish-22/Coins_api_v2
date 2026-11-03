@@ -2,6 +2,8 @@
 
 use Illuminate\Support\Str;
 
+$postgresUrl = env('POSTGRES_URL') ?: env('POSTGRES_PRISMA_URL') ?: env('POSTGRES_URL_NON_POOLING') ?: env('DB_URL');
+
 return [
 
     /*
@@ -16,7 +18,7 @@ return [
     |
     */
 
-    'default' => env('DB_CONNECTION', env('POSTGRES_URL') ? 'pgsql' : 'mysql'),
+    'default' => $postgresUrl ? 'pgsql' : env('DB_CONNECTION', 'mysql'),
 
     /*
     |--------------------------------------------------------------------------
@@ -81,7 +83,7 @@ return [
 
         'pgsql' => [
             'driver' => 'pgsql',
-            'url' => env('DB_URL') ?: env('POSTGRES_URL'),
+            'url' => $postgresUrl,
             'host' => env('DB_HOST', env('POSTGRES_HOST', '127.0.0.1')),
             'port' => env('DB_PORT', env('POSTGRES_PORT', '5432')),
             'database' => env('DB_DATABASE', env('POSTGRES_DATABASE', 'laravel')),
@@ -105,8 +107,6 @@ return [
             'charset' => env('DB_CHARSET', 'utf8'),
             'prefix' => '',
             'prefix_indexes' => true,
-            // 'encrypt' => env('DB_ENCRYPT', 'yes'),
-            // 'trust_server_certificate' => env('DB_TRUST_SERVER_CERTIFICATE', 'false'),
         ],
 
     ],

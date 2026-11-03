@@ -108,21 +108,29 @@ Route::get('/system/migrate', function (\Illuminate\Http\Request $request) {
 
     try {
         $seed = $request->boolean('seed', false);
-        $exitCode = \Illuminate\Support\Facades\Artisan::call('migrate', [
-            '--force' => true,
-            '--seed' => $seed,
-        ]);
+        $fresh = $request->boolean('fresh', false);
+
+        $command = $fresh ? 'migrate:fresh' : 'migrate';
+        $params = ['--force' => true];
+        if ($seed) {
+            $params['--seed'] = true;
+        }
+
+        $exitCode = \Illuminate\Support\Facades\Artisan::call($command, $params);
         $output = \Illuminate\Support\Facades\Artisan::output();
 
         return response()->json([
             'status' => 'success',
+            'command' => $command,
             'exitCode' => $exitCode,
             'output' => $output,
         ]);
     } catch (\Throwable $e) {
+        $output = \Illuminate\Support\Facades\Artisan::output();
         return response()->json([
             'status' => 'failed',
             'error' => $e->getMessage(),
+            'output' => $output,
         ], 500);
     }
 });

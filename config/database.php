@@ -98,7 +98,6 @@ return [
             'sslmode' => env('DB_SSLMODE', 'require'),
             'options' => [
                 PDO::ATTR_TIMEOUT => 10,
-                PDO::ATTR_EMULATE_PREPARES => true,
             ],
         ],
 

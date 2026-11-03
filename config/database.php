@@ -2,7 +2,7 @@
 
 use Illuminate\Support\Str;
 
-$postgresUrl = env('POSTGRES_URL') ?: env('POSTGRES_PRISMA_URL') ?: env('POSTGRES_URL_NON_POOLING') ?: env('DB_URL');
+$postgresUrl = env('POSTGRES_URL_NON_POOLING') ?: env('POSTGRES_URL') ?: env('POSTGRES_PRISMA_URL') ?: env('DB_URL');
 
 return [
 
@@ -97,7 +97,8 @@ return [
             'search_path' => 'public',
             'sslmode' => env('DB_SSLMODE', 'require'),
             'options' => [
-                PDO::ATTR_TIMEOUT => 5,
+                PDO::ATTR_TIMEOUT => 10,
+                PDO::ATTR_EMULATE_PREPARES => true,
             ],
         ],
 

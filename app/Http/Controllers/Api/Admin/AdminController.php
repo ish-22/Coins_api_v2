@@ -94,24 +94,36 @@ class AdminController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
             'password' => ['required', 'string', 'min:8'],
-            'role' => ['nullable', 'string', 'in:user,admin,operator'],
+            'role' => ['nullable', 'string', 'in:user,admin,operator,super_admin'],
             'status' => ['nullable', 'string', 'in:active,suspended,pending'],
             'kyc_tier' => ['nullable', 'string'],
             'country' => ['nullable', 'string'],
             'initial_balance_usd' => ['nullable', 'numeric', 'min:0'],
         ]);
 
-        $uid = 'CP-USR-' . rand(1000, 9999);
+        $currentUser = $request->user();
+        $targetRole = $validated['role'] ?? 'user';
+
+        // Role-Based Access Control: Only admin or super_admin can create staff accounts
+        if (in_array($targetRole, ['admin', 'super_admin', 'operator']) && !in_array($currentUser->role ?? '', ['admin', 'super_admin'])) {
+            return response()->json([
+                'message' => 'Permission denied: Operator role cannot create administrative or operator accounts.',
+            ], 403);
+        }
+
+        $uidPrefix = in_array($targetRole, ['admin', 'super_admin']) ? 'CP-ADM-' : ($targetRole === 'operator' ? 'CP-OPR-' : 'CP-USR-');
+        $uid = $uidPrefix . rand(1000, 9999);
+
         $user = User::create([
             'uid' => $uid,
             'name' => $validated['name'],
             'display_name' => $validated['name'],
             'full_name' => $validated['name'],
-            'email' => $validated['email'],
+            'email' => strtolower(trim($validated['email'])),
             'password' => \Illuminate\Support\Facades\Hash::make($validated['password']),
-            'role' => $validated['role'] ?? 'user',
+            'role' => $targetRole,
             'status' => $validated['status'] ?? 'active',
-            'kyc_tier' => $validated['kyc_tier'] ?? 'Tier 1 (Basic Identity)',
+            'kyc_tier' => $validated['kyc_tier'] ?? (in_array($targetRole, ['admin', 'super_admin', 'operator']) ? 'Tier 2 (Full KYC Verified)' : 'Tier 1 (Basic Identity)'),
             'country' => $validated['country'] ?? 'United States',
             'country_code' => 'US',
         ]);
@@ -127,17 +139,17 @@ class AdminController extends Controller
 
         AuditLog::create([
             'event_id' => 'EVT-' . rand(1000, 9999),
-            'user_id' => $request->user()->id,
-            'admin_email' => $request->user()->email,
-            'admin_name' => $request->user()->name,
-            'action' => "User Account Created: {$user->email} ({$user->uid})",
+            'user_id' => $currentUser->id,
+            'admin_email' => $currentUser->email,
+            'admin_name' => $currentUser->name,
+            'action' => "Account Created: {$user->email} ({$user->uid})",
             'category' => 'User Management',
             'ip_address' => $request->ip(),
-            'details' => "Administrative profile created for {$user->email} with role {$user->role}",
+            'details' => "Administrative profile created for {$user->email} with role '{$user->role}' by {$currentUser->email}",
         ]);
 
         return response()->json([
-            'message' => 'User created successfully.',
+            'message' => 'Account created successfully with assigned role.',
             'user' => [
                 'id' => (string) $user->id,
                 'userRef' => $user->uid,
@@ -161,17 +173,33 @@ class AdminController extends Controller
     public function updateUser(Request $request, int $id): JsonResponse
     {
         $user = User::findOrFail($id);
+        $currentUser = $request->user();
 
         $validated = $request->validate([
             'name' => ['nullable', 'string', 'max:255'],
             'email' => ['nullable', 'string', 'email', 'max:255', 'unique:users,email,' . $user->id],
             'password' => ['nullable', 'string', 'min:8'],
-            'role' => ['nullable', 'string', 'in:user,admin,operator'],
+            'role' => ['nullable', 'string', 'in:user,admin,operator,super_admin'],
             'status' => ['nullable', 'string', 'in:active,suspended,pending'],
             'kyc_tier' => ['nullable', 'string'],
             'country' => ['nullable', 'string'],
             'balance_usd' => ['nullable', 'numeric', 'min:0'],
         ]);
+
+        // Role-Based Access: changing role requires admin or super_admin
+        if (isset($validated['role']) && $validated['role'] !== $user->role) {
+            if (!in_array($currentUser->role ?? '', ['admin', 'super_admin'])) {
+                return response()->json([
+                    'message' => 'Permission denied: Only Administrators can modify user roles.',
+                ], 403);
+            }
+            if ($user->email === 'operator@coinplus.io' && !in_array($validated['role'], ['admin', 'super_admin'])) {
+                return response()->json([
+                    'message' => 'Cannot demote the primary system administrator account.',
+                ], 403);
+            }
+            $user->role = $validated['role'];
+        }
 
         if (!empty($validated['name'])) {
             $user->name = $validated['name'];
@@ -179,13 +207,10 @@ class AdminController extends Controller
             $user->display_name = $validated['name'];
         }
         if (!empty($validated['email'])) {
-            $user->email = $validated['email'];
+            $user->email = strtolower(trim($validated['email']));
         }
         if (!empty($validated['password'])) {
             $user->password = \Illuminate\Support\Facades\Hash::make($validated['password']);
-        }
-        if (isset($validated['role'])) {
-            $user->role = $validated['role'];
         }
         if (isset($validated['status'])) {
             $user->status = $validated['status'];
@@ -207,41 +232,73 @@ class AdminController extends Controller
 
         AuditLog::create([
             'event_id' => 'EVT-' . rand(1000, 9999),
-            'user_id' => $request->user()->id,
-            'admin_email' => $request->user()->email,
-            'admin_name' => $request->user()->name,
+            'user_id' => $currentUser->id,
+            'admin_email' => $currentUser->email,
+            'admin_name' => $currentUser->name,
             'action' => "User Profile Updated: {$user->email} ({$user->uid})",
             'category' => 'User Management',
             'ip_address' => $request->ip(),
-            'details' => "Administrative profile modification applied for {$user->email}",
+            'details' => "Administrative profile modification applied for {$user->email} (Role: {$user->role})",
         ]);
 
         return response()->json([
             'message' => 'User profile updated successfully.',
-            'user' => $user,
+            'user' => [
+                'id' => (string) $user->id,
+                'userRef' => $user->uid,
+                'name' => $user->name,
+                'email' => $user->email,
+                'role' => $user->role,
+                'country' => $user->country,
+                'countryCode' => $user->country_code,
+                'status' => $user->status,
+                'kycTier' => $user->kyc_tier,
+                'balanceUsd' => floatval($validated['balance_usd'] ?? 0),
+                'registeredAt' => $user->created_at->format('M d, Y'),
+                'lastLogin' => 'Active recently',
+                'twoFactorEnabled' => (bool) $user->two_factor_enabled,
+                'passkeysRegistered' => $user->passkeys_count > 0,
+                'ipAddress' => '127.0.0.1',
+            ],
         ]);
     }
 
     public function deleteUser(Request $request, int $id): JsonResponse
     {
         $user = User::findOrFail($id);
+        $currentUser = $request->user();
         $userEmail = $user->email;
         $userUid = $user->uid;
 
+        // Role-Based Access: operators cannot delete accounts
+        if (!in_array($currentUser->role ?? '', ['admin', 'super_admin'])) {
+            return response()->json([
+                'message' => 'Permission denied: Operators cannot delete accounts.',
+            ], 403);
+        }
+
         // Prevent admin from deleting themselves
-        if ($request->user()->id === $user->id) {
+        if ($currentUser->id === $user->id) {
             return response()->json([
                 'message' => 'You cannot delete your own active administrative account.',
             ], 422);
         }
 
+        // Protect primary operator root account
+        if ($user->email === 'operator@coinplus.io') {
+            return response()->json([
+                'message' => 'Protected account: The primary super administrator cannot be deleted.',
+            ], 403);
+        }
+
+        $user->tokens()->delete();
         $user->delete();
 
         AuditLog::create([
             'event_id' => 'EVT-' . rand(1000, 9999),
-            'user_id' => $request->user()->id,
-            'admin_email' => $request->user()->email,
-            'admin_name' => $request->user()->name,
+            'user_id' => $currentUser->id,
+            'admin_email' => $currentUser->email,
+            'admin_name' => $currentUser->name,
             'action' => "User Purged: {$userEmail} ({$userUid})",
             'category' => 'User Management',
             'ip_address' => $request->ip(),

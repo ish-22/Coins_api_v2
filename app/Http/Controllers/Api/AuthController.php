@@ -113,7 +113,8 @@ class AuthController extends Controller
             ], 403);
         }
 
-        $abilities = $user->role === 'admin' ? ['admin', '*'] : ['*'];
+        $isAdminRole = in_array($user->role, ['admin', 'super_admin', 'operator']);
+        $abilities = $isAdminRole ? ['admin', '*'] : ['*'];
         $token = $user->createToken('coinplus_auth_token', $abilities)->plainTextToken;
 
         return response()->json([
@@ -151,9 +152,9 @@ class AuthController extends Controller
             $user->save();
         }
 
-        if ($user->role !== 'admin') {
+        if (! in_array($user->role, ['admin', 'super_admin', 'operator'])) {
             return response()->json([
-                'message' => 'Unauthorized: This account does not have operator privileges.',
+                'message' => 'Unauthorized: This account does not have operator or administrator privileges.',
             ], 403);
         }
 
@@ -167,13 +168,13 @@ class AuthController extends Controller
             'action' => 'Admin Sign In',
             'category' => 'Authentication',
             'ip_address' => $request->ip(),
-            'details' => 'Administrative operator signed in successfully.',
+            'details' => "Administrative staff ({$user->role}) signed in successfully.",
         ]);
 
         return response()->json([
             'user' => $user,
             'token' => $token,
-            'role' => 'admin',
+            'role' => $user->role,
             'message' => 'Operator console authenticated.',
         ]);
     }

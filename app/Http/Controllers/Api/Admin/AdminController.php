@@ -317,18 +317,34 @@ class AdminController extends Controller
         ]);
 
         $user = User::findOrFail($id);
+        $currentUser = $request->user();
+
+        // Protect primary root administrator account
+        if ($user->email === 'operator@coinplus.io' && $validated['status'] !== 'active') {
+            return response()->json([
+                'message' => 'Protected account: The primary super administrator account cannot be suspended.',
+            ], 403);
+        }
+
+        // Operators cannot alter the status of administrator or super_admin accounts
+        if (!in_array($currentUser->role ?? '', ['admin', 'super_admin']) && in_array($user->role, ['admin', 'super_admin'])) {
+            return response()->json([
+                'message' => 'Permission denied: Operators cannot alter administrative account status.',
+            ], 403);
+        }
+
         $user->status = $validated['status'];
         $user->save();
 
         AuditLog::create([
             'event_id' => 'EVT-' . rand(1000, 9999),
-            'user_id' => $request->user()->id,
-            'admin_email' => $request->user()->email,
-            'admin_name' => $request->user()->name,
+            'user_id' => $currentUser->id,
+            'admin_email' => $currentUser->email,
+            'admin_name' => $currentUser->name,
             'action' => "User Status Updated: {$user->email} -> {$user->status}",
             'category' => 'User Management',
             'ip_address' => $request->ip(),
-            'details' => "Account {$user->uid} status updated to {$user->status}",
+            'details' => "Account {$user->uid} status updated to {$user->status} by {$currentUser->email}",
         ]);
 
         return response()->json([
@@ -653,8 +669,15 @@ class AdminController extends Controller
         ]);
     }
 
-    public function deleteAnnouncement(int $id): JsonResponse
+    public function deleteAnnouncement(Request $request, int $id): JsonResponse
     {
+        $currentUser = $request->user();
+        if (!in_array($currentUser->role ?? '', ['admin', 'super_admin'])) {
+            return response()->json([
+                'message' => 'Permission denied: Only Administrators can delete platform announcements.',
+            ], 403);
+        }
+
         Announcement::findOrFail($id)->delete();
 
         return response()->json([
@@ -688,6 +711,13 @@ class AdminController extends Controller
 
     public function createAsset(Request $request): JsonResponse
     {
+        $currentUser = $request->user();
+        if (!in_array($currentUser->role ?? '', ['admin', 'super_admin'])) {
+            return response()->json([
+                'message' => 'Permission denied: Only Administrators can configure new platform assets.',
+            ], 403);
+        }
+
         $validated = $request->validate([
             'symbol' => ['required', 'string', 'max:16', 'unique:assets,symbol'],
             'name' => ['required', 'string', 'max:64'],
@@ -726,6 +756,13 @@ class AdminController extends Controller
 
     public function updateAsset(Request $request, string $id): JsonResponse
     {
+        $currentUser = $request->user();
+        if (!in_array($currentUser->role ?? '', ['admin', 'super_admin'])) {
+            return response()->json([
+                'message' => 'Permission denied: Only Administrators can configure exchange assets.',
+            ], 403);
+        }
+
         $asset = Asset::findOrFail($id);
 
         $validated = $request->validate([
@@ -756,8 +793,15 @@ class AdminController extends Controller
         ]);
     }
 
-    public function deleteAsset(string $id): JsonResponse
+    public function deleteAsset(Request $request, string $id): JsonResponse
     {
+        $currentUser = $request->user();
+        if (!in_array($currentUser->role ?? '', ['admin', 'super_admin'])) {
+            return response()->json([
+                'message' => 'Permission denied: Only Administrators can delete platform assets.',
+            ], 403);
+        }
+
         $asset = Asset::findOrFail($id);
         $symbol = $asset->symbol;
         $asset->delete();
@@ -889,6 +933,13 @@ class AdminController extends Controller
 
     public function updateSettings(Request $request): JsonResponse
     {
+        $currentUser = $request->user();
+        if (!in_array($currentUser->role ?? '', ['admin', 'super_admin'])) {
+            return response()->json([
+                'message' => 'Permission denied: Only Administrators can modify platform system parameters.',
+            ], 403);
+        }
+
         $validated = $request->validate([
             'settings' => ['required', 'array'],
         ]);
@@ -897,6 +948,17 @@ class AdminController extends Controller
             ['key' => 'general'],
             ['value' => $validated['settings']]
         );
+
+        AuditLog::create([
+            'event_id' => 'EVT-' . rand(1000, 9999),
+            'user_id' => $currentUser->id,
+            'admin_email' => $currentUser->email,
+            'admin_name' => $currentUser->name,
+            'action' => 'System Parameters Updated',
+            'category' => 'System Configuration',
+            'ip_address' => $request->ip(),
+            'details' => "Platform parameters modified by {$currentUser->email} ({$currentUser->role})",
+        ]);
 
         return response()->json([
             'settings' => $setting->value,

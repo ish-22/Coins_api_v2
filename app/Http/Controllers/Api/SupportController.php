@@ -13,13 +13,43 @@ class SupportController extends Controller
     public function listTickets(Request $request): JsonResponse
     {
         $user = $request->user();
-        $tickets = SupportTicket::with('messages')
+        $tickets = SupportTicket::with(['messages' => function ($query) {
+            $query->orderBy('created_at', 'asc');
+        }])
             ->where('user_id', $user->id)
-            ->orderBy('created_at', 'desc')
+            ->orderBy('updated_at', 'desc')
             ->get();
 
+        $formatted = $tickets->map(function ($ticket) {
+            $unreadCount = $ticket->messages->where('sender_type', 'agent')->where('is_read', false)->count();
+            return [
+                'id' => (string) $ticket->id,
+                'ticket_ref' => $ticket->ticket_ref,
+                'subject' => $ticket->subject,
+                'category' => $ticket->category,
+                'priority' => $ticket->priority,
+                'status' => $ticket->status,
+                'unreadCount' => $unreadCount,
+                'createdAt' => $ticket->created_at ? $ticket->created_at->format('M d, Y H:i') : null,
+                'updatedAt' => $ticket->updated_at ? $ticket->updated_at->format('M d, Y H:i') : null,
+                'messages' => $ticket->messages->map(function ($msg) {
+                    return [
+                        'id' => (string) $msg->id,
+                        'sender' => $msg->sender_type,
+                        'senderName' => $msg->sender_name,
+                        'message' => $msg->message,
+                        'isRead' => (bool) $msg->is_read,
+                        'timestamp' => $msg->created_at ? $msg->created_at->format('M d, Y H:i') : null,
+                    ];
+                })->values()->all(),
+            ];
+        });
+
+        $totalUnread = $formatted->sum('unreadCount');
+
         return response()->json([
-            'tickets' => $tickets,
+            'tickets' => $formatted,
+            'totalUnread' => $totalUnread,
         ]);
     }
 
@@ -27,7 +57,7 @@ class SupportController extends Controller
     {
         $validated = $request->validate([
             'subject' => ['required', 'string', 'max:255'],
-            'category' => ['required', 'in:trading,account,deposits,withdrawals,kyc,security'],
+            'category' => ['required', 'in:trading,account,deposits,withdrawals,kyc,security,wallet'],
             'priority' => ['required', 'in:low,medium,high,urgent'],
             'message' => ['required', 'string'],
         ]);
@@ -43,15 +73,34 @@ class SupportController extends Controller
             'status' => 'open',
         ]);
 
-        SupportMessage::create([
+        $msg = SupportMessage::create([
             'support_ticket_id' => $ticket->id,
             'sender_type' => 'user',
             'sender_name' => $user->display_name ?? $user->name,
             'message' => $validated['message'],
+            'is_read' => false,
         ]);
 
         return response()->json([
-            'ticket' => $ticket->load('messages'),
+            'ticket' => [
+                'id' => (string) $ticket->id,
+                'ticket_ref' => $ticket->ticket_ref,
+                'subject' => $ticket->subject,
+                'category' => $ticket->category,
+                'priority' => $ticket->priority,
+                'status' => $ticket->status,
+                'unreadCount' => 0,
+                'createdAt' => $ticket->created_at ? $ticket->created_at->format('M d, Y H:i') : null,
+                'updatedAt' => $ticket->updated_at ? $ticket->updated_at->format('M d, Y H:i') : null,
+                'messages' => [[
+                    'id' => (string) $msg->id,
+                    'sender' => 'user',
+                    'senderName' => $msg->sender_name,
+                    'message' => $msg->message,
+                    'isRead' => false,
+                    'timestamp' => $msg->created_at ? $msg->created_at->format('M d, Y H:i') : null,
+                ]],
+            ],
             'message' => 'Support inquiry submitted successfully.',
         ], 201);
     }
@@ -70,12 +119,66 @@ class SupportController extends Controller
             'sender_type' => 'user',
             'sender_name' => $user->display_name ?? $user->name,
             'message' => $validated['message'],
+            'is_read' => false,
         ]);
+
+        // Re-open ticket if it was resolved or waiting_user
+        if (in_array($ticket->status, ['resolved', 'waiting_user', 'closed'])) {
+            $ticket->status = 'open';
+        }
+        $ticket->touch();
+        $ticket->save();
 
         return response()->json([
             'message' => 'Reply posted.',
-            'reply' => $msg,
+            'reply' => [
+                'id' => (string) $msg->id,
+                'sender' => 'user',
+                'senderName' => $msg->sender_name,
+                'message' => $msg->message,
+                'isRead' => false,
+                'timestamp' => $msg->created_at ? $msg->created_at->format('M d, Y H:i') : null,
+            ],
+            'ticket' => [
+                'id' => (string) $ticket->id,
+                'status' => $ticket->status,
+            ],
         ], 201);
+    }
+
+    public function markTicketRead(Request $request, int $id): JsonResponse
+    {
+        $user = $request->user();
+        $ticket = SupportTicket::where('user_id', $user->id)->findOrFail($id);
+
+        SupportMessage::where('support_ticket_id', $ticket->id)
+            ->where('sender_type', 'agent')
+            ->where('is_read', false)
+            ->update(['is_read' => true]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'All agent messages marked as read.',
+        ]);
+    }
+
+    public function updateTicketStatus(Request $request, int $id): JsonResponse
+    {
+        $validated = $request->validate([
+            'status' => ['required', 'in:resolved,closed,open'],
+        ]);
+
+        $user = $request->user();
+        $ticket = SupportTicket::where('user_id', $user->id)->findOrFail($id);
+
+        $ticket->status = $validated['status'];
+        $ticket->save();
+
+        return response()->json([
+            'success' => true,
+            'status' => $ticket->status,
+            'message' => "Ticket {$ticket->ticket_ref} marked as {$ticket->status}.",
+        ]);
     }
 
     public function submitContact(Request $request): JsonResponse
@@ -90,13 +193,12 @@ class SupportController extends Controller
 
         $referenceId = 'CP-INQ-' . rand(10000, 99999);
 
-        // Find existing user by email or fallback to demo trader / admin for foreign key if needed
         $user = \App\Models\User::where('email', strtolower(trim($validated['email'])))->first() 
             ?: \App\Models\User::where('email', 'demo.trader@coinplus.io')->first()
             ?: \App\Models\User::first();
 
         if ($user) {
-            $cat = in_array($validated['category'] ?? '', ['trading', 'account', 'deposits', 'withdrawals', 'kyc', 'security'])
+            $cat = in_array($validated['category'] ?? '', ['trading', 'account', 'deposits', 'withdrawals', 'kyc', 'security', 'wallet'])
                 ? $validated['category']
                 : 'account';
 
@@ -114,6 +216,7 @@ class SupportController extends Controller
                 'sender_type' => 'user',
                 'sender_name' => $validated['name'],
                 'message' => $validated['message'],
+                'is_read' => false,
             ]);
         }
 

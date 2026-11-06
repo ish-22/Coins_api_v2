@@ -15,6 +15,11 @@ class SupportMessage extends Model
         'sender_type',
         'sender_name',
         'message',
+        'is_read',
+    ];
+
+    protected $casts = [
+        'is_read' => 'boolean',
     ];
 
     public function ticket(): BelongsTo

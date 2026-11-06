@@ -321,6 +321,11 @@ Route::middleware(['auth:sanctum', AdminMiddleware::class])->prefix('admin')->gr
     Route::post('/support-tickets/{id}/reply', [AdminController::class, 'replySupportTicket']);
     Route::put('/support-tickets/{id}/status', [AdminController::class, 'updateTicketStatus']);
 
+    // Notification Management System
+    Route::get('/notifications/history', [AdminController::class, 'getNotificationHistory']);
+    Route::post('/notifications/send', [AdminController::class, 'sendNotification']);
+    Route::delete('/notifications/history/{id}', [AdminController::class, 'deleteNotificationDispatch']);
+
     // Audit & System Settings
     Route::get('/audit-logs', [AdminController::class, 'getAuditLogs']);
     Route::get('/settings', [AdminController::class, 'getSettings']);

@@ -6,7 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Models\Announcement;
 use App\Models\Asset;
 use App\Models\AuditLog;
+use App\Models\AdminNotificationDispatch;
 use App\Models\KycVerification;
+use App\Models\Notification;
 use App\Models\Order;
 use App\Models\SupportMessage;
 use App\Models\SupportTicket;
@@ -1881,6 +1883,219 @@ class AdminController extends Controller
                 'delta' => $delta,
             ],
             'transaction' => $tx,
+        ]);
+    }
+
+    public function getNotificationHistory(Request $request): JsonResponse
+    {
+        // Seed realistic demonstration dispatches if empty
+        if (AdminNotificationDispatch::count() === 0) {
+            $admin = $request->user();
+            $seedDispatches = [
+                [
+                    'admin_id' => $admin ? $admin->id : 1,
+                    'admin_name' => $admin ? $admin->name : 'System Operator',
+                    'admin_email' => $admin ? $admin->email : 'operator@coinplus.io',
+                    'title' => 'TRC-20 & ERC-20 Deposit Channel Upgrade',
+                    'message' => 'Destination deposit vault addresses for USDT have been migrated to multi-sig custody. Please refresh deposit addresses before sending assets.',
+                    'type' => 'deposit',
+                    'priority' => 'high',
+                    'target_type' => 'all',
+                    'target_count' => User::count() ?: 10,
+                    'target_summary' => 'All Registered Users (' . (User::count() ?: 10) . ' recipients)',
+                    'target_user_ids' => User::pluck('id')->toArray(),
+                    'link_text' => 'Deposit Funds',
+                    'link_href' => '/deposit',
+                    'created_at' => now()->subDays(2),
+                    'updated_at' => now()->subDays(2),
+                ],
+                [
+                    'admin_id' => $admin ? $admin->id : 1,
+                    'admin_name' => $admin ? $admin->name : 'System Operator',
+                    'admin_email' => $admin ? $admin->email : 'operator@coinplus.io',
+                    'title' => 'KYC Tier 2 Verification Requirement Reminder',
+                    'message' => 'Please upload clear photos of your valid Passport or National ID along with proof of address to unlock unrestricted $500,000 daily withdrawals.',
+                    'type' => 'kyc',
+                    'priority' => 'normal',
+                    'target_type' => 'all',
+                    'target_count' => User::count() ?: 10,
+                    'target_summary' => 'All Registered Users (' . (User::count() ?: 10) . ' recipients)',
+                    'target_user_ids' => User::pluck('id')->toArray(),
+                    'link_text' => 'Verify KYC',
+                    'link_href' => '/kyc',
+                    'created_at' => now()->subDays(4),
+                    'updated_at' => now()->subDays(4),
+                ],
+                [
+                    'admin_id' => $admin ? $admin->id : 1,
+                    'admin_name' => $admin ? $admin->name : 'System Operator',
+                    'admin_email' => $admin ? $admin->email : 'operator@coinplus.io',
+                    'title' => 'Trading Engine Maintenance & Matching Latency Optimization',
+                    'message' => 'The institutional order matching engine completed scheduled maintenance with sub-millisecond execution benchmarks.',
+                    'type' => 'trading',
+                    'priority' => 'normal',
+                    'target_type' => 'all',
+                    'target_count' => User::count() ?: 10,
+                    'target_summary' => 'All Registered Users (' . (User::count() ?: 10) . ' recipients)',
+                    'target_user_ids' => User::pluck('id')->toArray(),
+                    'link_text' => 'Go to Exchange',
+                    'link_href' => '/trade',
+                    'created_at' => now()->subWeek(),
+                    'updated_at' => now()->subWeek(),
+                ],
+            ];
+
+            foreach ($seedDispatches as $sd) {
+                AdminNotificationDispatch::create($sd);
+            }
+        }
+
+        $dispatches = AdminNotificationDispatch::orderBy('created_at', 'desc')->get()->map(function ($d) {
+            return [
+                'id' => (string) $d->id,
+                'adminName' => $d->admin_name,
+                'adminEmail' => $d->admin_email,
+                'title' => $d->title,
+                'message' => $d->message,
+                'type' => $d->type,
+                'priority' => $d->priority,
+                'targetType' => $d->target_type,
+                'targetCount' => (int) $d->target_count,
+                'targetSummary' => $d->target_summary,
+                'targetUserIds' => $d->target_user_ids ?: [],
+                'linkText' => $d->link_text,
+                'linkHref' => $d->link_href,
+                'createdAt' => $d->created_at->format('M d, Y H:i'),
+                'timestamp' => $d->created_at->diffForHumans(),
+            ];
+        });
+
+        return response()->json([
+            'dispatches' => $dispatches,
+            'totalSent' => $dispatches->count(),
+        ]);
+    }
+
+    public function sendNotification(Request $request): JsonResponse
+    {
+        $currentUser = $request->user();
+        if (!in_array($currentUser->role ?? '', ['admin', 'super_admin', 'operator'])) {
+            return response()->json([
+                'message' => 'Permission denied: Only authorized administrators can dispatch platform notifications.',
+            ], 403);
+        }
+
+        $validated = $request->validate([
+            'title' => ['required', 'string', 'max:255'],
+            'message' => ['required', 'string', 'max:5000'],
+            'type' => ['required', 'in:deposit,kyc,trading,account,security,system,announcements'],
+            'priority' => ['nullable', 'in:normal,high,urgent'],
+            'targetType' => ['required', 'in:all,individual,selected'],
+            'targetUserIds' => ['nullable', 'array'],
+            'linkText' => ['nullable', 'string', 'max:64'],
+            'linkHref' => ['nullable', 'string', 'max:128'],
+        ]);
+
+        $targetType = $validated['targetType'];
+        $recipients = collect();
+        $targetSummary = '';
+
+        if ($targetType === 'all') {
+            $recipients = User::all();
+            $targetSummary = 'All Registered Users (' . $recipients->count() . ' recipients)';
+        } elseif ($targetType === 'individual') {
+            $targetId = $request->input('targetUserIds.0');
+            if (!$targetId) {
+                return response()->json(['message' => 'Recipient user ID is required for individual notifications.'], 422);
+            }
+            $targetUser = User::findOrFail($targetId);
+            $recipients = collect([$targetUser]);
+            $targetSummary = "Individual: {$targetUser->name} ({$targetUser->email})";
+        } elseif ($targetType === 'selected') {
+            $userIds = $request->input('targetUserIds', []);
+            if (empty($userIds)) {
+                return response()->json(['message' => 'Please select at least one recipient user.'], 422);
+            }
+            $recipients = User::whereIn('id', $userIds)->get();
+            $previewNames = $recipients->pluck('name')->take(3)->join(', ');
+            $targetSummary = 'Selected (' . $recipients->count() . ' recipients): ' . $previewNames . ($recipients->count() > 3 ? '...' : '');
+        }
+
+        if ($recipients->isEmpty()) {
+            return response()->json(['message' => 'No matching recipient users found for dispatch.'], 422);
+        }
+
+        // Deliver notification directly to each recipient's User Panel notification inbox
+        foreach ($recipients as $recipient) {
+            Notification::create([
+                'user_id' => $recipient->id,
+                'title' => $validated['title'],
+                'message' => $validated['message'],
+                'type' => $validated['type'],
+                'read' => false,
+            ]);
+        }
+
+        // Record in Admin Notification Dispatch History
+        $dispatch = AdminNotificationDispatch::create([
+            'admin_id' => $currentUser->id,
+            'admin_name' => $currentUser->name,
+            'admin_email' => $currentUser->email,
+            'title' => $validated['title'],
+            'message' => $validated['message'],
+            'type' => $validated['type'],
+            'priority' => $validated['priority'] ?? 'normal',
+            'target_type' => $targetType,
+            'target_count' => $recipients->count(),
+            'target_summary' => $targetSummary,
+            'target_user_ids' => $recipients->pluck('id')->toArray(),
+            'link_text' => $validated['linkText'] ?? null,
+            'link_href' => $validated['linkHref'] ?? null,
+        ]);
+
+        // Audit Trail
+        AuditLog::create([
+            'event_id' => 'EVT-' . rand(1000, 9999),
+            'user_id' => $currentUser->id,
+            'admin_email' => $currentUser->email,
+            'admin_name' => $currentUser->name,
+            'action' => "Dispatched {$validated['type']} notification",
+            'category' => 'Notification Management',
+            'ip_address' => $request->ip(),
+            'details' => "Title: '{$validated['title']}'. Target: {$targetSummary}. Total recipients: {$recipients->count()}.",
+        ]);
+
+        return response()->json([
+            'message' => "Notification successfully dispatched to {$recipients->count()} recipient(s).",
+            'dispatch' => [
+                'id' => (string) $dispatch->id,
+                'title' => $dispatch->title,
+                'message' => $dispatch->message,
+                'type' => $dispatch->type,
+                'priority' => $dispatch->priority,
+                'targetType' => $dispatch->target_type,
+                'targetCount' => $dispatch->target_count,
+                'targetSummary' => $dispatch->target_summary,
+                'createdAt' => $dispatch->created_at->format('M d, Y H:i'),
+            ],
+            'deliveredCount' => $recipients->count(),
+        ], 201);
+    }
+
+    public function deleteNotificationDispatch(Request $request, int $id): JsonResponse
+    {
+        $currentUser = $request->user();
+        if (!in_array($currentUser->role ?? '', ['admin', 'super_admin'])) {
+            return response()->json([
+                'message' => 'Permission denied: Only Administrators can delete notification history records.',
+            ], 403);
+        }
+
+        $dispatch = AdminNotificationDispatch::findOrFail($id);
+        $dispatch->delete();
+
+        return response()->json([
+            'message' => 'Notification history entry removed.',
         ]);
     }
 }

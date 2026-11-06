@@ -282,6 +282,8 @@ Route::middleware(['auth:sanctum', AdminMiddleware::class])->prefix('admin')->gr
     Route::put('/users/{id}', [AdminController::class, 'updateUser']);
     Route::delete('/users/{id}', [AdminController::class, 'deleteUser']);
     Route::put('/users/{id}/status', [AdminController::class, 'updateUserStatus']);
+    Route::get('/users/{id}/balance', [AdminController::class, 'getUserBalanceDetails']);
+    Route::post('/users/{id}/balance-adjustment', [AdminController::class, 'adjustUserBalance']);
 
     // KYC Management
     Route::get('/kyc', [AdminController::class, 'getKycCases']);

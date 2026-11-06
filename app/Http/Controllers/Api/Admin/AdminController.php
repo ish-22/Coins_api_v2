@@ -13,6 +13,7 @@ use App\Models\SupportTicket;
 use App\Models\SystemSetting;
 use App\Models\Transaction;
 use App\Models\User;
+use App\Models\Wallet;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -1634,6 +1635,252 @@ class AdminController extends Controller
         return response()->json([
             'settings' => $setting->value,
             'message' => 'System parameters saved.',
+        ]);
+    }
+
+    public function getUserBalanceDetails(Request $request, string $id): JsonResponse
+    {
+        $user = User::with('wallets.asset')->findOrFail($id);
+        $allAssets = Asset::all();
+
+        // 1. Calculate per-asset balances and overall balances
+        $walletsMap = [];
+        foreach ($user->wallets as $w) {
+            $walletsMap[$w->asset_id] = $w;
+        }
+
+        $availableBalanceUsd = 0;
+        $lockedBalanceUsd = 0;
+        $totalBalanceUsd = 0;
+
+        $assetBreakdown = [];
+        foreach ($allAssets as $asset) {
+            $w = $walletsMap[$asset->id] ?? null;
+            $avail = $w ? (float) $w->available_balance : 0;
+            $locked = $w ? (float) $w->locked_balance : 0;
+            $total = $avail + $locked;
+            $price = (float) $asset->price_usd;
+            $valUsd = round($total * $price, 2);
+
+            $availableBalanceUsd += ($avail * $price);
+            $lockedBalanceUsd += ($locked * $price);
+            $totalBalanceUsd += $valUsd;
+
+            $assetBreakdown[] = [
+                'assetId' => $asset->id,
+                'symbol' => $asset->symbol,
+                'name' => $asset->name,
+                'color' => $asset->color,
+                'priceUsd' => $price,
+                'availableBalance' => $avail,
+                'lockedBalance' => $locked,
+                'totalBalance' => $total,
+                'valueUsd' => $valUsd,
+            ];
+        }
+
+        // 2. Calculate deposited & withdrawal totals
+        $depositsQuery = Transaction::where('user_id', $user->id)
+            ->where('type', 'deposit')
+            ->where('status', 'completed');
+        $totalDepositedUsd = (float) $depositsQuery->sum('value_usd');
+        $totalDepositedCount = $depositsQuery->count();
+
+        $withdrawalsQuery = Transaction::where('user_id', $user->id)
+            ->where('type', 'withdrawal')
+            ->where('status', 'completed');
+        $totalWithdrawalsUsd = (float) $withdrawalsQuery->sum('value_usd');
+        $totalWithdrawalsCount = $withdrawalsQuery->count();
+
+        // 3. User transactions
+        $transactions = Transaction::where('user_id', $user->id)
+            ->orderBy('created_at', 'desc')
+            ->get()
+            ->map(function ($t) {
+                return [
+                    'id' => (string) $t->id,
+                    'type' => $t->type,
+                    'asset' => $t->asset,
+                    'amount' => (float) $t->amount,
+                    'valueUsd' => (float) $t->value_usd,
+                    'feeUsd' => (float) $t->fee_usd,
+                    'status' => $t->status,
+                    'txHash' => $t->tx_hash,
+                    'network' => $t->network,
+                    'address' => $t->address,
+                    'notes' => $t->notes,
+                    'createdAt' => $t->created_at->format('M d, Y H:i:s'),
+                ];
+            });
+
+        // 4. Balance Adjustments history
+        $adjustments = Transaction::where('user_id', $user->id)
+            ->where('type', 'balance_adjustment')
+            ->orderBy('created_at', 'desc')
+            ->get()
+            ->map(function ($adj) {
+                return [
+                    'id' => (string) $adj->id,
+                    'asset' => $adj->asset,
+                    'amount' => (float) $adj->amount,
+                    'valueUsd' => (float) $adj->value_usd,
+                    'status' => $adj->status,
+                    'notes' => $adj->notes,
+                    'createdAt' => $adj->created_at->format('M d, Y H:i:s'),
+                ];
+            });
+
+        return response()->json([
+            'user' => [
+                'id' => (string) $user->id,
+                'name' => $user->full_name ?? $user->name,
+                'email' => $user->email,
+                'userRef' => $user->uid ?? ('UID-' . $user->id),
+                'role' => $user->role,
+                'status' => $user->status,
+                'kycTier' => $user->kyc_tier,
+                'registeredAt' => $user->created_at->format('M d, Y H:i'),
+            ],
+            'balanceSummary' => [
+                'availableBalanceUsd' => round($availableBalanceUsd, 2),
+                'lockedBalanceUsd' => round($lockedBalanceUsd, 2),
+                'totalBalanceUsd' => round($totalBalanceUsd, 2),
+                'totalDepositedUsd' => round($totalDepositedUsd, 2),
+                'totalDepositedCount' => $totalDepositedCount,
+                'totalWithdrawalsUsd' => round($totalWithdrawalsUsd, 2),
+                'totalWithdrawalsCount' => $totalWithdrawalsCount,
+            ],
+            'wallets' => $assetBreakdown,
+            'transactions' => $transactions,
+            'adjustments' => $adjustments,
+        ]);
+    }
+
+    public function adjustUserBalance(Request $request, string $id): JsonResponse
+    {
+        $currentUser = $request->user();
+        if (!in_array($currentUser->role ?? '', ['admin', 'super_admin', 'operator'])) {
+            return response()->json([
+                'message' => 'Permission denied: Only authorized administrators can perform balance adjustments.',
+            ], 403);
+        }
+
+        $validated = $request->validate([
+            'asset' => ['required', 'string'],
+            'amount' => ['required', 'numeric', 'min:0.00000001'],
+            'type' => ['required', 'in:add,deduct,correction,credit,debit'],
+            'procedure' => ['required', 'in:verified_payment,refund,correction,authorized_procedure'],
+            'reason' => ['required', 'string', 'min:5', 'max:1000'],
+            'deltaDirection' => ['nullable', 'in:increase,decrease'],
+            'targetBalance' => ['nullable', 'numeric'],
+        ]);
+
+        $user = User::findOrFail($id);
+
+        // RBAC: Operators cannot adjust administrators or super administrators
+        if ($currentUser->role === 'operator' && in_array($user->role ?? '', ['admin', 'super_admin'])) {
+            return response()->json([
+                'message' => 'Permission denied: Operators cannot adjust administrator account balances.',
+            ], 403);
+        }
+
+        $symbol = strtoupper($validated['asset']);
+        $assetObj = Asset::where('symbol', $symbol)->orWhere('id', strtolower($symbol))->first();
+        $assetId = $assetObj ? $assetObj->id : strtolower($symbol);
+        $assetPrice = $assetObj && $assetObj->price_usd > 0 ? (float) $assetObj->price_usd : 1.0;
+
+        $wallet = Wallet::firstOrCreate(
+            ['user_id' => $user->id, 'asset_id' => $assetId],
+            ['available_balance' => 0, 'locked_balance' => 0]
+        );
+
+        $prevBalance = (float) $wallet->available_balance;
+        $reqType = $validated['type'];
+        $amount = (float) $validated['amount'];
+        $delta = 0;
+        $actionName = '';
+
+        if ($reqType === 'add' || $reqType === 'credit') {
+            $delta = abs($amount);
+            $newBalance = $prevBalance + $delta;
+            $actionName = 'Add Balance (Credit)';
+        } elseif ($reqType === 'deduct' || $reqType === 'debit') {
+            $deductAmount = abs($amount);
+            if ($prevBalance < $deductAmount) {
+                return response()->json([
+                    'message' => "Insufficient available balance. User has {$prevBalance} {$symbol}, cannot deduct {$deductAmount} {$symbol}.",
+                ], 422);
+            }
+            $delta = -$deductAmount;
+            $newBalance = $prevBalance - $deductAmount;
+            $actionName = 'Deduct Balance (Debit)';
+        } else {
+            // Correction
+            if ($request->has('targetBalance') && $request->targetBalance !== null) {
+                $target = (float) $request->targetBalance;
+                $delta = $target - $prevBalance;
+                $newBalance = max(0, $target);
+            } else {
+                $delta = ($request->input('deltaDirection') === 'decrease') ? -abs($amount) : abs($amount);
+                $newBalance = max(0, $prevBalance + $delta);
+            }
+            $actionName = 'Account Balance Error Correction';
+        }
+
+        $wallet->available_balance = $newBalance;
+        $wallet->save();
+
+        $valueUsd = round(abs($delta) * $assetPrice, 2);
+        $procedureLabel = match ($validated['procedure']) {
+            'verified_payment' => 'Verified External Payment',
+            'refund' => 'Customer Refund / Reimbursement',
+            'correction' => 'Account Balance Error Correction',
+            'authorized_procedure' => 'Authorized Financial Procedure',
+        };
+
+        // 1. Create Transaction Ledger Entry
+        $tx = Transaction::create([
+            'id' => 'adj-' . rand(10000, 99999),
+            'user_id' => $user->id,
+            'type' => 'balance_adjustment',
+            'asset' => $symbol,
+            'amount' => $delta,
+            'value_usd' => $valueUsd,
+            'fee_usd' => 0,
+            'status' => 'completed',
+            'notes' => "[{$procedureLabel}] {$validated['reason']} (Admin: {$currentUser->name} <{$currentUser->email}> | Prev: {$prevBalance} -> New: {$newBalance})",
+        ]);
+
+        // 2. Create Security Audit Log
+        AuditLog::create([
+            'event_id' => 'EVT-' . rand(1000, 9999),
+            'user_id' => $currentUser->id,
+            'admin_email' => $currentUser->email,
+            'admin_name' => $currentUser->name,
+            'action' => "Balance Adjustment: " . ($delta >= 0 ? "+{$delta}" : "{$delta}") . " {$symbol}",
+            'category' => 'Balance Management',
+            'ip_address' => $request->ip(),
+            'details' => "Action: {$actionName}. Procedure: {$procedureLabel}. Reason: {$validated['reason']}. Beneficiary: {$user->email} ({$user->name}, UID: {$user->uid}). Prev Balance: {$prevBalance} {$symbol}, New Balance: {$newBalance} {$symbol} (Δ: " . ($delta >= 0 ? "+{$delta}" : "{$delta}") . "). Value USD: ≈\${$valueUsd}.",
+        ]);
+
+        // 3. User Notification
+        \App\Models\Notification::create([
+            'user_id' => $user->id,
+            'title' => 'Account Balance Adjustment',
+            'message' => "Your {$symbol} balance was adjusted by " . ($delta >= 0 ? "+{$delta}" : "{$delta}") . " {$symbol} under authorized procedure [{$procedureLabel}]. Reason: {$validated['reason']}.",
+            'type' => 'deposit',
+            'read' => false,
+        ]);
+
+        return response()->json([
+            'message' => "Successfully adjusted {$user->name}'s {$symbol} balance by " . ($delta >= 0 ? "+{$delta}" : "{$delta}") . " {$symbol}.",
+            'wallet' => [
+                'asset' => $symbol,
+                'previousBalance' => $prevBalance,
+                'newBalance' => $newBalance,
+                'delta' => $delta,
+            ],
+            'transaction' => $tx,
         ]);
     }
 }

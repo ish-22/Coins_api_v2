@@ -18,3 +18,4 @@ return new class extends Migration
         DB::statement("ALTER TABLE `transactions` MODIFY `status` ENUM('completed', 'processing', 'failed') NOT NULL DEFAULT 'completed'");
     }
 };
+

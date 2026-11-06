@@ -18,3 +18,4 @@ return new class extends Migration
         DB::statement("ALTER TABLE `transactions` MODIFY `type` ENUM('deposit', 'withdrawal', 'trade_buy', 'trade_sell', 'earn_yield') NOT NULL DEFAULT 'deposit'");
     }
 };
+

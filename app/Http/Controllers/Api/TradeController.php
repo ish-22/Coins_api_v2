@@ -103,6 +103,20 @@ class TradeController extends Controller
         ]);
 
         $user = $request->user();
+
+        // Important Verification Rule:
+        // A user's trading account must NOT become fully verified until the administrator approves the submitted KYC documents.
+        // If the administrator has not approved the KYC application, the user must remain unverified and restricted from accessing trading functions that require verification.
+        $isKycVerified = in_array(strtoupper(trim($user->kyc_tier ?? '')), ['VERIFIED', 'TIER 2 (VERIFIED)', 'TIER 1 (VERIFIED)'])
+            || str_contains(strtoupper($user->kyc_tier ?? ''), 'VERIFIED')
+            || in_array($user->role, ['super_admin', 'admin', 'compliance_officer', 'support_specialist']);
+
+        if (! $isKycVerified) {
+            return response()->json([
+                'message' => 'KYC Verification Required: Your account is currently unverified. Trading functions require an approved KYC application from the administrator.',
+                'kyc_status' => $user->kyc_tier ?? 'Tier 0 (Unverified)',
+            ], 403);
+        }
         $pairSymbol = str_replace('-', '/', strtoupper($validated['pair']));
         $parts = explode('/', $pairSymbol);
         $baseAssetSymbol = $parts[0] ?? 'BTC';

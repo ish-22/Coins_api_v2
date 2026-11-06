@@ -238,6 +238,7 @@ Route::middleware(['auth:sanctum', EnsureAccountIsActive::class])->group(functio
     Route::prefix('trade')->group(function () {
         Route::get('/orders', [TradeController::class, 'getOrders']);
         Route::post('/orders', [TradeController::class, 'placeOrder']);
+        Route::post('/order', [TradeController::class, 'placeOrder']);
         Route::post('/orders/{id}/cancel', [TradeController::class, 'cancelOrder']);
     });
 

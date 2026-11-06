@@ -400,6 +400,9 @@ class AdminController extends Controller
                 'documentNumber' => $c->document_number ?? 'N/A',
                 'proofOfAddressType' => $c->proof_of_address_type ?? 'Bank Statement',
                 'rejectionReason' => $c->rejection_reason,
+                'idFrontPlaceholder' => $c->id_front_path ?? ($c->document_type === 'Passport' ? 'passport_front_scan.jpg' : 'id_card_front.jpg'),
+                'idBackPlaceholder' => $c->id_back_path ?? ($c->document_type === 'Passport' ? 'passport_signature_page.jpg' : 'id_card_back.jpg'),
+                'proofOfAddressPlaceholder' => $c->proof_of_address_path ?? 'proof_of_address.pdf',
             ];
         });
 
@@ -418,13 +421,19 @@ class AdminController extends Controller
         $case = KycVerification::findOrFail($id);
         $case->status = ($validated['action'] === 'approve') ? 'approved' : 'rejected';
         if ($case->status === 'rejected') {
-            $case->rejection_reason = $validated['rejectionReason'] ?? 'Document unreadable';
+            $case->rejection_reason = $validated['rejectionReason'] ?? 'Document incorrect or incomplete';
+        } else {
+            $case->rejection_reason = null;
         }
         $case->reviewed_at = now();
         $case->save();
 
-        if ($case->status === 'approved' && $case->user) {
-            $case->user->kyc_tier = $case->tier . ' (Verified)';
+        if ($case->user) {
+            if ($case->status === 'approved') {
+                $case->user->kyc_tier = 'VERIFIED';
+            } else {
+                $case->user->kyc_tier = 'Tier 0 (Rejected)';
+            }
             $case->user->save();
         }
 

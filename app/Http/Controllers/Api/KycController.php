@@ -17,7 +17,7 @@ class KycController extends Controller
             ->get();
 
         return response()->json([
-            'currentTier' => $user->kyc_tier,
+            'currentTier' => $user->kyc_tier ?? 'Tier 0 (Unverified)',
             'status' => $user->status,
             'submissions' => $submissions,
             'limits' => [
@@ -39,24 +39,27 @@ class KycController extends Controller
         ]);
 
         $user = $request->user();
-        $user->kyc_tier = 'Tier 1 (Basic)';
+        // Trading account remains unverified until administrative compliance approval
+        $user->kyc_tier = 'Tier 1 (In Review)';
         $user->save();
 
         $case = KycVerification::create([
             'case_ref' => 'KYC-' . rand(10000, 99999),
             'user_id' => $user->id,
             'tier' => 'Tier 1',
-            'status' => 'approved',
+            'status' => 'in_review',
             'document_type' => $validated['idType'],
             'document_number' => $validated['idNumber'],
-            'reviewed_at' => now(),
+            'id_front_path' => 'tier1_id_front.jpg',
+            'id_back_path' => 'tier1_id_back.jpg',
+            'reviewed_at' => null,
         ]);
 
         return response()->json([
             'kycTier' => $user->kyc_tier,
             'case' => $case,
-            'message' => 'Tier 1 Basic Identity Verification approved.',
-        ]);
+            'message' => 'Tier 1 Basic Identity verification submitted. Compliance review is pending administrator approval.',
+        ], 201);
     }
 
     public function submitTier2(Request $request): JsonResponse
@@ -71,6 +74,9 @@ class KycController extends Controller
             'documentType' => ['nullable', 'string'],
             'documentNumber' => ['nullable', 'string'],
             'proofOfAddressType' => ['nullable', 'string'],
+            'idFront' => ['nullable', 'string'],
+            'idBack' => ['nullable', 'string'],
+            'proofOfAddress' => ['nullable', 'string'],
         ]);
 
         $user = $request->user();
@@ -83,26 +89,33 @@ class KycController extends Controller
         if (!empty($validated['country'])) {
             $user->country = $validated['country'];
         }
+        // Trading account remains unverified until administrative compliance approval
         $user->kyc_tier = 'Tier 2 (In Review)';
         $user->save();
+
+        $docType = $validated['documentType'] ?? 'Passport';
+        $frontName = $validated['idFront'] ?? ($docType === 'Passport' ? 'passport_front_scan.jpg' : 'id_front_scan.jpg');
+        $backName = $validated['idBack'] ?? ($docType === 'Passport' ? 'passport_signature_page.jpg' : 'id_back_scan.jpg');
+        $poaName = $validated['proofOfAddress'] ?? 'proof_of_address.pdf';
 
         $case = KycVerification::create([
             'case_ref' => 'KYC-' . rand(10000, 99999),
             'user_id' => $user->id,
             'tier' => 'Tier 2',
             'status' => 'in_review',
-            'document_type' => $validated['documentType'] ?? 'Passport',
+            'document_type' => $docType,
             'document_number' => $validated['documentNumber'] ?? ('DOC-' . rand(100000, 999999)),
             'proof_of_address_type' => $validated['proofOfAddressType'] ?? 'Utility Bill',
-            'id_front_path' => 'simulated_front.jpg',
-            'id_back_path' => 'simulated_back.jpg',
-            'proof_of_address_path' => 'simulated_poa.pdf',
+            'id_front_path' => $frontName,
+            'id_back_path' => $backName,
+            'proof_of_address_path' => $poaName,
+            'reviewed_at' => null,
         ]);
 
         return response()->json([
             'case' => $case,
             'kycTier' => $user->kyc_tier,
-            'message' => 'Identity verification documents submitted. Compliance review is now in progress.',
+            'message' => 'Identity verification documents submitted. Compliance review is pending administrator approval.',
         ], 201);
     }
 }

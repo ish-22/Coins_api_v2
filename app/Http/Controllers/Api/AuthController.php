@@ -23,6 +23,7 @@ class AuthController extends Controller
         $validated = $request->validate([
             'fullName' => ['required', 'string', 'max:128'],
             'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
+            'phone' => ['nullable', 'string', 'max:32'],
             'password' => ['required', 'string', Password::min(8)],
             'country' => ['nullable', 'string', 'max:64'],
             'acceptTerms' => ['accepted'],
@@ -38,6 +39,7 @@ class AuthController extends Controller
             'display_name' => $validated['fullName'],
             'full_name' => $validated['fullName'],
             'email' => strtolower(trim($validated['email'])),
+            'phone' => $validated['phone'] ?? null,
             'password' => Hash::make($validated['password']),
             'country' => $validated['country'] ?? 'United States',
             'role' => 'user',
@@ -70,6 +72,17 @@ class AuthController extends Controller
                 'locked_balance' => 0,
             ]);
         }
+
+        AuditLog::create([
+            'event_id' => 'EVT-' . rand(1000, 9999),
+            'user_id' => $user->id,
+            'admin_email' => $user->email,
+            'admin_name' => $user->name,
+            'action' => "Client Registered: {$user->email} ({$user->uid})",
+            'category' => 'User Registration',
+            'ip_address' => $request->ip(),
+            'details' => "New client account registered for {$user->name} ({$user->email})" . ($user->phone ? ", Phone: {$user->phone}" : ''),
+        ]);
 
         $token = $user->createToken('coinplus_auth_token')->plainTextToken;
 
@@ -108,8 +121,13 @@ class AuthController extends Controller
         }
 
         if ($user->status !== 'active') {
+            $msg = $user->status === 'blocked'
+                ? 'Your account has been blocked by the administration. Access is restricted.'
+                : ($user->status === 'suspended'
+                    ? 'Your account is suspended. Please contact customer support.'
+                    : 'Your account is pending verification. Please contact support.');
             return response()->json([
-                'message' => 'Your account is suspended or pending verification. Please contact support.',
+                'message' => $msg,
             ], 403);
         }
 

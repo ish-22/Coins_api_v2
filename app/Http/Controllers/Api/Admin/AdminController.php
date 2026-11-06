@@ -69,13 +69,14 @@ class AdminController extends Controller
                 'userRef' => $u->uid ?? ('UID-' . $u->id),
                 'name' => $u->full_name ?? $u->name,
                 'email' => $u->email,
+                'phone' => $u->phone ?? 'N/A',
                 'role' => $u->role ?? 'user',
                 'country' => $u->country ?? 'United States',
                 'countryCode' => $u->country_code ?? 'US',
                 'status' => $u->status,
                 'kycTier' => $u->kyc_tier,
                 'balanceUsd' => round($totalBalanceUsd, 2),
-                'registeredAt' => $u->created_at->format('M d, Y'),
+                'registeredAt' => $u->created_at->format('M d, Y H:i'),
                 'lastLogin' => 'Active recently',
                 'twoFactorEnabled' => (bool) $u->two_factor_enabled,
                 'passkeysRegistered' => $u->passkeys_count > 0,
@@ -93,9 +94,10 @@ class AdminController extends Controller
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
+            'phone' => ['nullable', 'string', 'max:32'],
             'password' => ['required', 'string', 'min:8'],
             'role' => ['nullable', 'string', 'in:user,admin,operator,super_admin'],
-            'status' => ['nullable', 'string', 'in:active,suspended,pending'],
+            'status' => ['nullable', 'string', 'in:active,suspended,pending,blocked'],
             'kyc_tier' => ['nullable', 'string'],
             'country' => ['nullable', 'string'],
             'initial_balance_usd' => ['nullable', 'numeric', 'min:0'],
@@ -120,6 +122,7 @@ class AdminController extends Controller
             'display_name' => $validated['name'],
             'full_name' => $validated['name'],
             'email' => strtolower(trim($validated['email'])),
+            'phone' => $validated['phone'] ?? null,
             'password' => \Illuminate\Support\Facades\Hash::make($validated['password']),
             'role' => $targetRole,
             'status' => $validated['status'] ?? 'active',
@@ -155,13 +158,14 @@ class AdminController extends Controller
                 'userRef' => $user->uid,
                 'name' => $user->name,
                 'email' => $user->email,
+                'phone' => $user->phone ?? 'N/A',
                 'role' => $user->role,
                 'country' => $user->country,
                 'countryCode' => $user->country_code,
                 'status' => $user->status,
                 'kycTier' => $user->kyc_tier,
                 'balanceUsd' => $initialUsdt,
-                'registeredAt' => $user->created_at->format('M d, Y'),
+                'registeredAt' => $user->created_at->format('M d, Y H:i'),
                 'lastLogin' => 'Never',
                 'twoFactorEnabled' => false,
                 'passkeysRegistered' => false,
@@ -178,9 +182,10 @@ class AdminController extends Controller
         $validated = $request->validate([
             'name' => ['nullable', 'string', 'max:255'],
             'email' => ['nullable', 'string', 'email', 'max:255', 'unique:users,email,' . $user->id],
+            'phone' => ['nullable', 'string', 'max:32'],
             'password' => ['nullable', 'string', 'min:8'],
             'role' => ['nullable', 'string', 'in:user,admin,operator,super_admin'],
-            'status' => ['nullable', 'string', 'in:active,suspended,pending'],
+            'status' => ['nullable', 'string', 'in:active,suspended,pending,blocked'],
             'kyc_tier' => ['nullable', 'string'],
             'country' => ['nullable', 'string'],
             'balance_usd' => ['nullable', 'numeric', 'min:0'],
@@ -209,11 +214,17 @@ class AdminController extends Controller
         if (!empty($validated['email'])) {
             $user->email = strtolower(trim($validated['email']));
         }
+        if (isset($validated['phone'])) {
+            $user->phone = $validated['phone'];
+        }
         if (!empty($validated['password'])) {
             $user->password = \Illuminate\Support\Facades\Hash::make($validated['password']);
         }
         if (isset($validated['status'])) {
             $user->status = $validated['status'];
+            if (in_array($validated['status'], ['blocked', 'suspended'])) {
+                $user->tokens()->delete();
+            }
         }
         if (isset($validated['kyc_tier'])) {
             $user->kyc_tier = $validated['kyc_tier'];
@@ -248,13 +259,14 @@ class AdminController extends Controller
                 'userRef' => $user->uid,
                 'name' => $user->name,
                 'email' => $user->email,
+                'phone' => $user->phone ?? 'N/A',
                 'role' => $user->role,
                 'country' => $user->country,
                 'countryCode' => $user->country_code,
                 'status' => $user->status,
                 'kycTier' => $user->kyc_tier,
                 'balanceUsd' => floatval($validated['balance_usd'] ?? 0),
-                'registeredAt' => $user->created_at->format('M d, Y'),
+                'registeredAt' => $user->created_at->format('M d, Y H:i'),
                 'lastLogin' => 'Active recently',
                 'twoFactorEnabled' => (bool) $user->two_factor_enabled,
                 'passkeysRegistered' => $user->passkeys_count > 0,
@@ -313,7 +325,7 @@ class AdminController extends Controller
     public function updateUserStatus(Request $request, int $id): JsonResponse
     {
         $validated = $request->validate([
-            'status' => ['required', 'in:active,suspended,pending'],
+            'status' => ['required', 'in:active,suspended,pending,blocked'],
         ]);
 
         $user = User::findOrFail($id);
@@ -322,7 +334,7 @@ class AdminController extends Controller
         // Protect primary root administrator account
         if ($user->email === 'operator@coinplus.io' && $validated['status'] !== 'active') {
             return response()->json([
-                'message' => 'Protected account: The primary super administrator account cannot be suspended.',
+                'message' => 'Protected account: The primary super administrator account status cannot be altered.',
             ], 403);
         }
 
@@ -336,6 +348,11 @@ class AdminController extends Controller
         $user->status = $validated['status'];
         $user->save();
 
+        // If the account is blocked or suspended, immediately revoke active session tokens so they cannot operate
+        if (in_array($validated['status'], ['blocked', 'suspended'])) {
+            $user->tokens()->delete();
+        }
+
         AuditLog::create([
             'event_id' => 'EVT-' . rand(1000, 9999),
             'user_id' => $currentUser->id,
@@ -348,8 +365,20 @@ class AdminController extends Controller
         ]);
 
         return response()->json([
-            'user' => $user,
-            'message' => 'User status updated successfully.',
+            'user' => [
+                'id' => (string) $user->id,
+                'userRef' => $user->uid,
+                'name' => $user->name,
+                'email' => $user->email,
+                'phone' => $user->phone ?? 'N/A',
+                'role' => $user->role,
+                'country' => $user->country,
+                'countryCode' => $user->country_code,
+                'status' => $user->status,
+                'kycTier' => $user->kyc_tier,
+                'registeredAt' => $user->created_at->format('M d, Y H:i'),
+            ],
+            'message' => "User account status updated to {$user->status} successfully.",
         ]);
     }
 

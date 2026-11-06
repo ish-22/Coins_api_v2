@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\SupportController;
 use App\Http\Controllers\Api\TradeController;
 use App\Http\Controllers\Api\WalletController;
 use App\Http\Middleware\AdminMiddleware;
+use App\Http\Middleware\EnsureAccountIsActive;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -212,7 +213,7 @@ Route::post('/support/contact', [SupportController::class, 'submitContact'])->mi
 Route::get('/wallet/deposit/address', [WalletController::class, 'getDepositAddress']);
 
 // ── Protected Customer Routes (Sanctum Authenticated) ──
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware(['auth:sanctum', EnsureAccountIsActive::class])->group(function () {
     // Auth Session
     Route::get('/auth/user', [AuthController::class, 'user']);
     Route::post('/auth/logout', [AuthController::class, 'logout']);

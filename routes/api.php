@@ -291,7 +291,10 @@ Route::middleware(['auth:sanctum', AdminMiddleware::class])->prefix('admin')->gr
     Route::get('/withdrawals', [AdminController::class, 'getWithdrawals']);
     Route::post('/withdrawals/{id}/review', [AdminController::class, 'reviewWithdrawal']);
 
-    // Orders Management
+    // Trading Management System
+    Route::get('/trading/overview', [AdminController::class, 'getTradingOverview']);
+    Route::get('/trading/traders/{id}', [AdminController::class, 'getTraderPerformance']);
+    Route::put('/trading/settings', [AdminController::class, 'updateTradingSettings']);
     Route::get('/orders', [AdminController::class, 'getOrders']);
     Route::delete('/orders/{id}', [AdminController::class, 'cancelOrderAdmin']);
 

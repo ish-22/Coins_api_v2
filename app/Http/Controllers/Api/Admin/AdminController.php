@@ -647,6 +647,263 @@ class AdminController extends Controller
         ]);
     }
 
+    public function getTradingOverview(): JsonResponse
+    {
+        $assets = Asset::all()->keyBy('symbol');
+
+        // Fetch all orders with user
+        $allOrders = Order::with('user')->orderBy('created_at', 'desc')->get();
+
+        // Calculate win/loss for each order
+        $mappedOrders = $allOrders->map(function ($o) use ($assets) {
+            $parts = explode('/', $o->pair);
+            $baseSymbol = $parts[0] ?? 'BTC';
+            $currentPrice = isset($assets[$baseSymbol]) ? (float) $assets[$baseSymbol]->price_usd : (float) $o->price;
+
+            $pnlUsd = 0.0;
+            $isWin = null;
+
+            if ($o->status === 'filled') {
+                if ($o->side === 'buy') {
+                    $pnlUsd = round(($currentPrice - (float) $o->price) * (float) $o->amount, 2);
+                } else {
+                    $pnlUsd = round(((float) $o->price - $currentPrice) * (float) $o->amount, 2);
+                }
+                $isWin = $pnlUsd >= 0;
+            }
+
+            return [
+                'id' => (string) $o->id,
+                'orderRef' => $o->id,
+                'userId' => (string) $o->user_id,
+                'userName' => $o->user ? $o->user->name : 'Trader',
+                'userEmail' => $o->user ? $o->user->email : 'N/A',
+                'pair' => $o->pair,
+                'side' => $o->side,
+                'type' => $o->type,
+                'price' => (float) $o->price,
+                'amount' => (float) $o->amount,
+                'filled' => (float) $o->filled,
+                'totalUsd' => (float) $o->total,
+                'status' => $o->status,
+                'pnlUsd' => $pnlUsd,
+                'isWin' => $isWin,
+                'createdAt' => $o->created_at->format('M d, Y H:i:s'),
+            ];
+        });
+
+        // Registered traders list (users who are clients or have placed trades)
+        $users = User::all();
+        $traders = $users->map(function ($user) use ($mappedOrders) {
+            $userOrders = $mappedOrders->where('userId', (string) $user->id);
+            $totalTrades = $userOrders->count();
+            $openTrades = $userOrders->where('status', 'open')->count();
+            $filledTrades = $userOrders->where('status', 'filled')->count();
+            $volumeUsd = round($userOrders->sum('totalUsd'), 2);
+
+            $winningTrades = $userOrders->where('status', 'filled')->where('isWin', true)->count();
+            $losingTrades = $userOrders->where('status', 'filled')->where('isWin', false)->count();
+            $totalEvaluated = $winningTrades + $losingTrades;
+            $winRate = $totalEvaluated > 0 ? round(($winningTrades / $totalEvaluated) * 100, 1) : 0.0;
+            $totalPnl = round($userOrders->where('status', 'filled')->sum('pnlUsd'), 2);
+
+            $riskScore = 'Low';
+            if ($volumeUsd > 100000 || ($totalTrades > 20 && $winRate < 35)) {
+                $riskScore = 'High';
+            } elseif ($volumeUsd > 25000 || $totalTrades > 10) {
+                $riskScore = 'Medium';
+            }
+
+            return [
+                'id' => (string) $user->id,
+                'userRef' => $user->uid,
+                'name' => $user->name,
+                'email' => $user->email,
+                'role' => $user->role,
+                'country' => $user->country ?? 'United States',
+                'status' => $user->status,
+                'kycTier' => $user->kyc_tier ?? 'Tier 0 (Unverified)',
+                'registeredAt' => $user->created_at ? $user->created_at->format('M d, Y') : 'N/A',
+                'totalTrades' => $totalTrades,
+                'openTrades' => $openTrades,
+                'filledTrades' => $filledTrades,
+                'volumeUsd' => $volumeUsd,
+                'winningTrades' => $winningTrades,
+                'losingTrades' => $losingTrades,
+                'winRate' => $winRate,
+                'totalPnl' => $totalPnl,
+                'riskScore' => $riskScore,
+            ];
+        })->sortByDesc('volumeUsd')->values();
+
+        // Platform-wide Statistics
+        $totalOrdersCount = $mappedOrders->count();
+        $activeOrdersCount = $mappedOrders->where('status', 'open')->count();
+        $filledOrdersCount = $mappedOrders->where('status', 'filled')->count();
+        $totalVolume = round($mappedOrders->sum('totalUsd'), 2);
+        $totalWins = $mappedOrders->where('status', 'filled')->where('isWin', true)->count();
+        $totalLosses = $mappedOrders->where('status', 'filled')->where('isWin', false)->count();
+        $totalEval = $totalWins + $totalLosses;
+        $platformWinRate = $totalEval > 0 ? round(($totalWins / $totalEval) * 100, 1) : 0.0;
+        $totalPnlPlatform = round($mappedOrders->where('status', 'filled')->sum('pnlUsd'), 2);
+
+        // Trading Settings & Disclosed Simulation Parameters
+        $setting = SystemSetting::where('key', 'trading_config')->first();
+        $config = $setting ? $setting->value : [
+            'engine_status' => 'active',
+            'base_maker_fee' => 0.001,
+            'base_taker_fee' => 0.0015,
+            'slippage_tolerance' => 0.5,
+            'max_leverage' => 10,
+            'unverified_daily_limit_usd' => 0,
+            'tier1_daily_limit_usd' => 10000,
+            'tier2_daily_limit_usd' => 500000,
+            'tier3_daily_limit_usd' => 5000000,
+            'simulation_win_rate' => 65,
+            'demo_initial_balance_usd' => 10000,
+            'demo_slippage_model' => 'normal',
+            'market_integrity_protection' => true,
+            'regulatory_disclosure' => 'For real-money trading, actual trading results are strictly determined by market order-book execution and disclosed exchange rules. Administrative intervention or secret manipulation of individual users\' live trade outcomes is strictly prohibited and cryptographically audited.',
+        ];
+
+        return response()->json([
+            'orders' => $mappedOrders,
+            'traders' => $traders,
+            'stats' => [
+                'totalTradesCount' => $totalOrdersCount,
+                'activeTradesCount' => $activeOrdersCount,
+                'completedTradesCount' => $filledOrdersCount,
+                'totalVolumeUsd' => $totalVolume,
+                'totalWinningTrades' => $totalWins,
+                'totalLosingTrades' => $totalLosses,
+                'platformWinRate' => $platformWinRate,
+                'totalPnlUsd' => $totalPnlPlatform,
+                'totalTradersCount' => $traders->count(),
+            ],
+            'settings' => $config,
+        ]);
+    }
+
+    public function getTraderPerformance(int $id): JsonResponse
+    {
+        $user = User::findOrFail($id);
+        $assets = Asset::all()->keyBy('symbol');
+
+        $orders = Order::where('user_id', $user->id)
+            ->orderBy('created_at', 'desc')
+            ->get()
+            ->map(function ($o) use ($assets) {
+                $parts = explode('/', $o->pair);
+                $baseSymbol = $parts[0] ?? 'BTC';
+                $currentPrice = isset($assets[$baseSymbol]) ? (float) $assets[$baseSymbol]->price_usd : (float) $o->price;
+
+                $pnlUsd = 0.0;
+                $isWin = null;
+                if ($o->status === 'filled') {
+                    if ($o->side === 'buy') {
+                        $pnlUsd = round(($currentPrice - (float) $o->price) * (float) $o->amount, 2);
+                    } else {
+                        $pnlUsd = round(((float) $o->price - $currentPrice) * (float) $o->amount, 2);
+                    }
+                    $isWin = $pnlUsd >= 0;
+                }
+
+                return [
+                    'id' => (string) $o->id,
+                    'orderRef' => $o->id,
+                    'pair' => $o->pair,
+                    'side' => $o->side,
+                    'type' => $o->type,
+                    'price' => (float) $o->price,
+                    'amount' => (float) $o->amount,
+                    'filled' => (float) $o->filled,
+                    'totalUsd' => (float) $o->total,
+                    'status' => $o->status,
+                    'pnlUsd' => $pnlUsd,
+                    'isWin' => $isWin,
+                    'createdAt' => $o->created_at->format('M d, Y H:i:s'),
+                ];
+            });
+
+        $totalTrades = $orders->count();
+        $winningTrades = $orders->where('status', 'filled')->where('isWin', true)->count();
+        $losingTrades = $orders->where('status', 'filled')->where('isWin', false)->count();
+        $totalEval = $winningTrades + $losingTrades;
+        $winRate = $totalEval > 0 ? round(($winningTrades / $totalEval) * 100, 1) : 0.0;
+        $totalPnl = round($orders->where('status', 'filled')->sum('pnlUsd'), 2);
+        $bestTrade = $orders->where('status', 'filled')->max('pnlUsd') ?? 0;
+        $worstTrade = $orders->where('status', 'filled')->min('pnlUsd') ?? 0;
+
+        return response()->json([
+            'trader' => [
+                'id' => (string) $user->id,
+                'userRef' => $user->uid,
+                'name' => $user->name,
+                'email' => $user->email,
+                'phone' => $user->phone ?? 'N/A',
+                'country' => $user->country ?? 'United States',
+                'kycTier' => $user->kyc_tier ?? 'Tier 0 (Unverified)',
+                'status' => $user->status,
+                'registeredAt' => $user->created_at ? $user->created_at->format('M d, Y H:i') : 'N/A',
+            ],
+            'performance' => [
+                'totalTrades' => $totalTrades,
+                'openTrades' => $orders->where('status', 'open')->count(),
+                'filledTrades' => $orders->where('status', 'filled')->count(),
+                'winningTrades' => $winningTrades,
+                'losingTrades' => $losingTrades,
+                'winRate' => $winRate,
+                'totalPnl' => $totalPnl,
+                'bestTrade' => (float) $bestTrade,
+                'worstTrade' => (float) $worstTrade,
+                'totalVolume' => round($orders->sum('totalUsd'), 2),
+            ],
+            'history' => $orders,
+        ]);
+    }
+
+    public function updateTradingSettings(Request $request): JsonResponse
+    {
+        $currentUser = $request->user();
+        if (!in_array($currentUser->role ?? '', ['admin', 'super_admin'])) {
+            return response()->json([
+                'message' => 'Permission denied: Only Administrators can configure trading engine parameters.',
+            ], 403);
+        }
+
+        $validated = $request->validate([
+            'settings' => ['required', 'array'],
+        ]);
+
+        $settings = $validated['settings'];
+        // Ensure market integrity protection is always enforced
+        $settings['market_integrity_protection'] = true;
+        $settings['regulatory_disclosure'] = 'For real-money trading, actual trading results are strictly determined by market order-book execution and disclosed exchange rules. Administrative intervention or secret manipulation of individual users\' live trade outcomes is strictly prohibited and cryptographically audited.';
+
+        $setting = SystemSetting::updateOrCreate(
+            ['key' => 'trading_config'],
+            ['value' => $settings]
+        );
+
+        $winRate = $settings['simulation_win_rate'] ?? 65;
+
+        AuditLog::create([
+            'event_id' => 'EVT-' . rand(1000, 9999),
+            'user_id' => $currentUser->id,
+            'admin_email' => $currentUser->email,
+            'admin_name' => $currentUser->name,
+            'action' => 'Trading Engine & Simulation Settings Updated',
+            'category' => 'Trading Management',
+            'ip_address' => $request->ip(),
+            'details' => "Trading engine settings and disclosed simulation win-rate ({$winRate}%) updated by {$currentUser->email}",
+        ]);
+
+        return response()->json([
+            'settings' => $setting->value,
+            'message' => 'Trading management parameters and simulation settings updated successfully.',
+        ]);
+    }
+
     public function getAnnouncements(): JsonResponse
     {
         return response()->json([

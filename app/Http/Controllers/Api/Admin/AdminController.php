@@ -454,11 +454,288 @@ class AdminController extends Controller
         ]);
     }
 
-    public function getDeposits(): JsonResponse
+    public static function getDefaultDepositMethods(): array
     {
-        $deposits = Transaction::with('user')
-            ->where('type', 'deposit')
-            ->orderBy('created_at', 'desc')
+        return [
+            [
+                'id' => 'dep-btc-mainnet',
+                'asset' => 'BTC',
+                'name' => 'Bitcoin',
+                'network' => 'Bitcoin (Native SegWit)',
+                'address' => 'bc1q9px90f3c71a4819d9b2e04f7c11a2245bb318029',
+                'minDeposit' => 0.0005,
+                'confirmations' => 3,
+                'memoRequired' => false,
+                'memo' => null,
+                'enabled' => true,
+            ],
+            [
+                'id' => 'dep-eth-erc20',
+                'asset' => 'ETH',
+                'name' => 'Ethereum',
+                'network' => 'ERC-20 (Ethereum)',
+                'address' => '0x71C8821199a0B1298811d7F4ac91882019482011',
+                'minDeposit' => 0.01,
+                'confirmations' => 12,
+                'memoRequired' => false,
+                'memo' => null,
+                'enabled' => true,
+            ],
+            [
+                'id' => 'dep-usdt-trc20',
+                'asset' => 'USDT',
+                'name' => 'Tether USD (TRC-20)',
+                'network' => 'TRC-20 (Tron)',
+                'address' => 'TX9Qe881948ac9120847719201948201148zK',
+                'minDeposit' => 10.0,
+                'confirmations' => 20,
+                'memoRequired' => false,
+                'memo' => null,
+                'enabled' => true,
+            ],
+            [
+                'id' => 'dep-usdt-erc20',
+                'asset' => 'USDT',
+                'name' => 'Tether USD (ERC-20)',
+                'network' => 'ERC-20 (Ethereum)',
+                'address' => '0x71C8821199a0B1298811d7F4ac91882019482011',
+                'minDeposit' => 20.0,
+                'confirmations' => 12,
+                'memoRequired' => false,
+                'memo' => null,
+                'enabled' => true,
+            ],
+            [
+                'id' => 'dep-sol-spl',
+                'asset' => 'SOL',
+                'name' => 'Solana',
+                'network' => 'Solana (SPL)',
+                'address' => '8F3c71a4819d9B2e04f7c11a2245bB318029e1F5',
+                'minDeposit' => 0.1,
+                'confirmations' => 32,
+                'memoRequired' => false,
+                'memo' => null,
+                'enabled' => true,
+            ],
+            [
+                'id' => 'dep-xrp-ledger',
+                'asset' => 'XRP',
+                'name' => 'Ripple',
+                'network' => 'XRP Ledger',
+                'address' => 'rEb8TK3gBgk5auZyyb6GeaHSqHT5943WII',
+                'minDeposit' => 10.0,
+                'confirmations' => 1,
+                'memoRequired' => true,
+                'memo' => '881920',
+                'enabled' => true,
+            ],
+            [
+                'id' => 'dep-bnb-bep20',
+                'asset' => 'BNB',
+                'name' => 'BNB',
+                'network' => 'BEP-20 (BNB Smart Chain)',
+                'address' => 'bnb1q9px90f3c71a4819d9b2e04f7c11a2245bb318029',
+                'minDeposit' => 0.05,
+                'confirmations' => 15,
+                'memoRequired' => false,
+                'memo' => null,
+                'enabled' => true,
+            ],
+            [
+                'id' => 'dep-usdc-erc20',
+                'asset' => 'USDC',
+                'name' => 'USD Coin',
+                'network' => 'ERC-20 (Ethereum)',
+                'address' => '0x44a1b029ff8812c37719d2a019b8821948ac9120',
+                'minDeposit' => 10.0,
+                'confirmations' => 12,
+                'memoRequired' => false,
+                'memo' => null,
+                'enabled' => true,
+            ],
+        ];
+    }
+
+    public function getDepositMethods(): JsonResponse
+    {
+        $setting = SystemSetting::where('key', 'deposit_methods')->first();
+        if ($setting && is_array($setting->value) && count($setting->value) > 0) {
+            return response()->json(['methods' => $setting->value]);
+        }
+
+        $defaults = self::getDefaultDepositMethods();
+        SystemSetting::updateOrCreate(['key' => 'deposit_methods'], ['value' => $defaults]);
+
+        return response()->json(['methods' => $defaults]);
+    }
+
+    public function updateDepositMethods(Request $request): JsonResponse
+    {
+        $currentUser = $request->user();
+        if (!in_array($currentUser->role ?? '', ['admin', 'super_admin'])) {
+            return response()->json([
+                'message' => 'Permission denied: Only Administrators can update deposit methods.',
+            ], 403);
+        }
+
+        $validated = $request->validate([
+            'methods' => ['required', 'array'],
+            'methods.*.asset' => ['required', 'string'],
+            'methods.*.network' => ['required', 'string'],
+            'methods.*.address' => ['required', 'string'],
+            'methods.*.minDeposit' => ['nullable', 'numeric'],
+            'methods.*.confirmations' => ['nullable', 'integer'],
+            'methods.*.enabled' => ['nullable', 'boolean'],
+            'methods.*.memoRequired' => ['nullable', 'boolean'],
+            'methods.*.memo' => ['nullable', 'string'],
+        ]);
+
+        $methods = [];
+        foreach ($validated['methods'] as $m) {
+            $methods[] = [
+                'id' => $m['id'] ?? ('dep-' . strtolower($m['asset']) . '-' . strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $m['network']))),
+                'asset' => strtoupper($m['asset']),
+                'name' => $m['name'] ?? strtoupper($m['asset']),
+                'network' => $m['network'],
+                'address' => trim($m['address']),
+                'minDeposit' => isset($m['minDeposit']) ? (float) $m['minDeposit'] : 0.0001,
+                'confirmations' => isset($m['confirmations']) ? (int) $m['confirmations'] : 12,
+                'memoRequired' => !empty($m['memoRequired']),
+                'memo' => $m['memo'] ?? null,
+                'enabled' => !isset($m['enabled']) || (bool) $m['enabled'],
+            ];
+        }
+
+        SystemSetting::updateOrCreate(
+            ['key' => 'deposit_methods'],
+            ['value' => $methods]
+        );
+
+        AuditLog::create([
+            'event_id' => 'EVT-' . rand(1000, 9999),
+            'user_id' => $currentUser->id,
+            'admin_email' => $currentUser->email,
+            'admin_name' => $currentUser->name,
+            'action' => 'Deposit Methods Configuration Updated',
+            'category' => 'Deposit Management',
+            'ip_address' => $request->ip(),
+            'details' => "Updated " . count($methods) . " deposit methods and wallet addresses by {$currentUser->email}",
+        ]);
+
+        return response()->json([
+            'message' => 'Deposit methods and addresses successfully updated.',
+            'methods' => $methods,
+        ]);
+    }
+
+    public function updateDepositWalletAddress(Request $request): JsonResponse
+    {
+        $currentUser = $request->user();
+        if (!in_array($currentUser->role ?? '', ['admin', 'super_admin'])) {
+            return response()->json([
+                'message' => 'Permission denied: Only Administrators can update deposit wallet addresses.',
+            ], 403);
+        }
+
+        $validated = $request->validate([
+            'asset' => ['required', 'string'],
+            'network' => ['nullable', 'string'],
+            'address' => ['required', 'string', 'min:10'],
+            'memo' => ['nullable', 'string'],
+        ]);
+
+        $setting = SystemSetting::where('key', 'deposit_methods')->first();
+        $methods = ($setting && is_array($setting->value)) ? $setting->value : self::getDefaultDepositMethods();
+
+        $assetUpper = strtoupper($validated['asset']);
+        $networkReq = $validated['network'] ?? null;
+        $updated = false;
+
+        foreach ($methods as &$method) {
+            $matchesAsset = strtoupper($method['asset']) === $assetUpper;
+            $matchesNetwork = empty($networkReq) || (strcasecmp($method['network'], $networkReq) === 0);
+            if ($matchesAsset && $matchesNetwork) {
+                $method['address'] = trim($validated['address']);
+                if (isset($validated['memo'])) {
+                    $method['memo'] = trim($validated['memo']);
+                }
+                $updated = true;
+                break;
+            }
+        }
+
+        if (!$updated) {
+            $methods[] = [
+                'id' => 'dep-' . strtolower($assetUpper) . '-' . time(),
+                'asset' => $assetUpper,
+                'name' => $assetUpper,
+                'network' => $networkReq ?: 'Native',
+                'address' => trim($validated['address']),
+                'minDeposit' => 0.0001,
+                'confirmations' => 12,
+                'memoRequired' => !empty($validated['memo']),
+                'memo' => $validated['memo'] ?? null,
+                'enabled' => true,
+            ];
+        }
+
+        SystemSetting::updateOrCreate(
+            ['key' => 'deposit_methods'],
+            ['value' => $methods]
+        );
+
+        AuditLog::create([
+            'event_id' => 'EVT-' . rand(1000, 9999),
+            'user_id' => $currentUser->id,
+            'admin_email' => $currentUser->email,
+            'admin_name' => $currentUser->name,
+            'action' => "Deposit Wallet Address Updated ({$assetUpper})",
+            'category' => 'Deposit Management',
+            'ip_address' => $request->ip(),
+            'details' => "Updated deposit wallet address for {$assetUpper}" . ($networkReq ? " [{$networkReq}]" : "") . " to {$validated['address']}",
+        ]);
+
+        return response()->json([
+            'message' => "Deposit address for {$assetUpper} updated successfully.",
+            'methods' => $methods,
+        ]);
+    }
+
+    public function getDeposits(Request $request): JsonResponse
+    {
+        $query = Transaction::with('user')->where('type', 'deposit');
+
+        if ($request->has('status') && !empty($request->query('status')) && $request->query('status') !== 'all') {
+            $status = $request->query('status');
+            if ($status === 'successful') {
+                $status = 'completed';
+            }
+            $query->where('status', $status);
+        }
+
+        if ($request->has('user_id') && !empty($request->query('user_id'))) {
+            $query->where('user_id', $request->query('user_id'));
+        }
+
+        if ($request->has('asset') && !empty($request->query('asset')) && $request->query('asset') !== 'all') {
+            $query->where('asset', strtoupper($request->query('asset')));
+        }
+
+        if ($request->has('q') && !empty($request->query('q'))) {
+            $search = $request->query('q');
+            $query->where(function ($q) use ($search) {
+                $q->where('id', 'like', "%{$search}%")
+                  ->orWhere('tx_hash', 'like', "%{$search}%")
+                  ->orWhere('address', 'like', "%{$search}%")
+                  ->orWhereHas('user', function ($uq) use ($search) {
+                      $uq->where('name', 'like', "%{$search}%")
+                         ->orWhere('email', 'like', "%{$search}%")
+                         ->orWhere('user_ref', 'like', "%{$search}%");
+                  });
+            });
+        }
+
+        $deposits = $query->orderBy('created_at', 'desc')
             ->get()
             ->map(function ($d) {
                 return [
@@ -467,20 +744,119 @@ class AdminController extends Controller
                     'txHash' => $d->tx_hash,
                     'userId' => (string) $d->user_id,
                     'userName' => $d->user ? $d->user->name : 'Trader',
+                    'userEmail' => $d->user ? $d->user->email : 'trader@coinplus.io',
+                    'userRef' => $d->user ? ($d->user->user_ref ?? ('USR-' . substr($d->user->id, -6))) : 'USR-000000',
                     'asset' => $d->asset,
                     'network' => $d->network ?? 'Blockchain Mainnet',
                     'amount' => (float) $d->amount,
                     'amountUsd' => (float) $d->value_usd,
                     'status' => $d->status,
-                    'confirmations' => 32,
+                    'confirmations' => $d->confirmations ?? 32,
                     'requiredConfirmations' => 32,
                     'destinationAddress' => $d->address ?? 'Vault',
+                    'rejectionReason' => $d->notes,
+                    'notes' => $d->notes,
                     'createdAt' => $d->created_at->format('M d, Y H:i'),
                 ];
             });
 
         return response()->json([
             'deposits' => $deposits,
+        ]);
+    }
+
+    public function reviewDeposit(Request $request, string $id): JsonResponse
+    {
+        $currentUser = $request->user();
+        if (!in_array($currentUser->role ?? '', ['admin', 'super_admin'])) {
+            return response()->json([
+                'message' => 'Permission denied: Only Administrators can review deposit requests.',
+            ], 403);
+        }
+
+        $validated = $request->validate([
+            'action' => ['required', 'in:approve,reject'],
+            'reason' => ['nullable', 'string'],
+        ]);
+
+        $deposit = Transaction::where('id', $id)->firstOrFail();
+        if ($deposit->type !== 'deposit') {
+            return response()->json(['message' => 'Transaction is not a deposit.'], 400);
+        }
+
+        if ($deposit->status !== 'pending') {
+            return response()->json([
+                'message' => "Deposit has already been {$deposit->status} and cannot be modified.",
+            ], 400);
+        }
+
+        if ($validated['action'] === 'approve') {
+            $deposit->status = 'completed';
+            $deposit->notes = $validated['reason'] ?? 'Approved by administrative compliance desk';
+
+            // Credit user's wallet
+            $assetObj = Asset::where('symbol', $deposit->asset)->first();
+            $assetId = $assetObj ? $assetObj->id : strtolower($deposit->asset);
+            $wallet = \App\Models\Wallet::firstOrCreate(
+                ['user_id' => $deposit->user_id, 'asset_id' => $assetId],
+                ['available_balance' => 0, 'locked_balance' => 0]
+            );
+            $wallet->available_balance += (float) $deposit->amount;
+            $wallet->save();
+
+            // Notify user
+            \App\Models\Notification::create([
+                'user_id' => $deposit->user_id,
+                'title' => 'Deposit Confirmed',
+                'message' => "Your deposit of {$deposit->amount} {$deposit->asset} has been verified and credited to your wallet balance.",
+                'type' => 'deposit',
+                'read' => false,
+            ]);
+        } else {
+            $deposit->status = 'rejected';
+            $deposit->notes = $validated['reason'] ?? 'Deposit rejected: Invalid transaction proof or unconfirmed transfer';
+
+            // Notify user
+            \App\Models\Notification::create([
+                'user_id' => $deposit->user_id,
+                'title' => 'Deposit Rejected',
+                'message' => "Your deposit request of {$deposit->amount} {$deposit->asset} was rejected. Reason: {$deposit->notes}",
+                'type' => 'deposit',
+                'read' => false,
+            ]);
+        }
+
+        $deposit->save();
+
+        AuditLog::create([
+            'event_id' => 'EVT-' . rand(1000, 9999),
+            'user_id' => $currentUser->id,
+            'admin_email' => $currentUser->email,
+            'admin_name' => $currentUser->name,
+            'action' => "Deposit {$deposit->id} " . ucfirst($validated['action']) . 'd',
+            'category' => 'Deposit Management',
+            'ip_address' => $request->ip(),
+            'details' => "Deposit of {$deposit->amount} {$deposit->asset} (User: {$deposit->user_id}) reviewed with outcome: {$deposit->status}. " . ($deposit->notes ? "Note: {$deposit->notes}" : ""),
+        ]);
+
+        return response()->json([
+            'message' => "Deposit {$deposit->id} " . ($validated['action'] === 'approve' ? 'approved and credited' : 'rejected') . " successfully.",
+            'deposit' => [
+                'id' => (string) $deposit->id,
+                'depositRef' => 'DEP-' . substr($deposit->id, -6),
+                'txHash' => $deposit->tx_hash,
+                'userId' => (string) $deposit->user_id,
+                'asset' => $deposit->asset,
+                'network' => $deposit->network,
+                'amount' => (float) $deposit->amount,
+                'amountUsd' => (float) $deposit->value_usd,
+                'status' => $deposit->status,
+                'confirmations' => $deposit->confirmations ?? 32,
+                'destinationAddress' => $deposit->address,
+                'rejectionReason' => $deposit->notes,
+                'notes' => $deposit->notes,
+                'createdAt' => $deposit->created_at->format('M d, Y H:i'),
+            ],
         ]);
     }
 

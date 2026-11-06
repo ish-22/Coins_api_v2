@@ -248,6 +248,7 @@ Route::middleware(['auth:sanctum', EnsureAccountIsActive::class])->group(functio
         Route::get('/assets', [WalletController::class, 'getAssets']);
         Route::get('/transactions', [WalletController::class, 'getTransactions']);
         Route::post('/deposit/simulate', [WalletController::class, 'simulateDeposit']);
+        Route::post('/deposit/request', [WalletController::class, 'requestDeposit']);
         Route::post('/withdraw', [WalletController::class, 'withdraw']);
         Route::get('/watchlist', [WalletController::class, 'getWatchlist']);
         Route::post('/watchlist', [WalletController::class, 'toggleWatchlist']);
@@ -288,6 +289,10 @@ Route::middleware(['auth:sanctum', AdminMiddleware::class])->prefix('admin')->gr
 
     // Financial Operations (Deposits & Withdrawals)
     Route::get('/deposits', [AdminController::class, 'getDeposits']);
+    Route::get('/deposits/methods', [AdminController::class, 'getDepositMethods']);
+    Route::put('/deposits/methods', [AdminController::class, 'updateDepositMethods']);
+    Route::post('/deposits/wallet-address', [AdminController::class, 'updateDepositWalletAddress']);
+    Route::post('/deposits/{id}/review', [AdminController::class, 'reviewDeposit']);
     Route::get('/withdrawals', [AdminController::class, 'getWithdrawals']);
     Route::post('/withdrawals/{id}/review', [AdminController::class, 'reviewWithdrawal']);
 

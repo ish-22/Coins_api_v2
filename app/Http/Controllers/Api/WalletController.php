@@ -133,8 +133,49 @@ class WalletController extends Controller
     public function getDepositAddress(Request $request): JsonResponse
     {
         $assetSymbol = strtoupper($request->query('asset', 'BTC'));
-        $network = $request->query('network', 'Native');
+        $network = $request->query('network', '');
 
+        // 1. Check if administrator has customized deposit methods or wallet addresses in SystemSetting
+        $methodsSetting = \App\Models\SystemSetting::where('key', 'deposit_methods')->first();
+        if ($methodsSetting && is_array($methodsSetting->value)) {
+            // Check for match by asset and network
+            foreach ($methodsSetting->value as $method) {
+                if (strtoupper($method['asset'] ?? '') === $assetSymbol) {
+                    $methodNet = strtolower($method['network'] ?? '');
+                    $reqNet = strtolower($network);
+                    if (empty($network) || str_contains($methodNet, $reqNet) || str_contains($reqNet, $methodNet)) {
+                        return response()->json([
+                            'asset' => $assetSymbol,
+                            'network' => $method['network'] ?? ($network ?: 'Native'),
+                            'address' => $method['address'],
+                            'memoRequired' => (bool) ($method['memoRequired'] ?? false),
+                            'memo' => $method['memo'] ?? null,
+                            'minDeposit' => (float) ($method['minDeposit'] ?? 0.0001),
+                            'confirmationsRequired' => (int) ($method['confirmations'] ?? 12),
+                            'updatedAt' => $methodsSetting->updated_at?->toIso8601String(),
+                        ]);
+                    }
+                }
+            }
+
+            // Fallback match by asset alone
+            foreach ($methodsSetting->value as $method) {
+                if (strtoupper($method['asset'] ?? '') === $assetSymbol) {
+                    return response()->json([
+                        'asset' => $assetSymbol,
+                        'network' => $method['network'] ?? ($network ?: 'Native'),
+                        'address' => $method['address'],
+                        'memoRequired' => (bool) ($method['memoRequired'] ?? false),
+                        'memo' => $method['memo'] ?? null,
+                        'minDeposit' => (float) ($method['minDeposit'] ?? 0.0001),
+                        'confirmationsRequired' => (int) ($method['confirmations'] ?? 12),
+                        'updatedAt' => $methodsSetting->updated_at?->toIso8601String(),
+                    ]);
+                }
+            }
+        }
+
+        // 2. Default fallback addresses
         $addresses = [
             'BTC' => 'bc1q9px90f3c71a4819d9b2e04f7c11a2245bb318029',
             'ETH' => '0x71C8821199a0B1298811d7F4ac91882019482011',
@@ -150,13 +191,59 @@ class WalletController extends Controller
 
         return response()->json([
             'asset' => $assetSymbol,
-            'network' => $network,
+            'network' => $network ?: 'Native',
             'address' => $address,
             'memoRequired' => ($assetSymbol === 'XRP'),
             'memo' => ($assetSymbol === 'XRP') ? '881920' : null,
             'minDeposit' => 0.0001,
             'confirmationsRequired' => ($assetSymbol === 'BTC') ? 3 : 12,
         ]);
+    }
+
+    public function requestDeposit(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'asset' => ['required', 'string'],
+            'amount' => ['required', 'numeric', 'min:0.00000001'],
+            'network' => ['nullable', 'string'],
+            'txHash' => ['nullable', 'string'],
+            'address' => ['nullable', 'string'],
+        ]);
+
+        $user = $request->user();
+        $symbol = strtoupper($validated['asset']);
+
+        $asset = Asset::where('symbol', $symbol)->firstOrFail();
+        if (isset($asset->deposit_enabled) && ! $asset->deposit_enabled) {
+            return response()->json([
+                'message' => "Deposits for {$symbol} are temporarily disabled by platform administration.",
+            ], 422);
+        }
+
+        $price = (float) $asset->price_usd;
+        $valUsd = round($validated['amount'] * $price, 2);
+
+        $tx = Transaction::create([
+            'id' => 'tx-dep-' . rand(10000, 99999),
+            'user_id' => $user->id,
+            'type' => 'deposit',
+            'asset' => $symbol,
+            'amount' => $validated['amount'],
+            'value_usd' => $valUsd,
+            'fee_usd' => 0,
+            'status' => 'pending', // Pending administrator approval
+            'tx_hash' => $validated['txHash'] ?? ('0x' . bin2hex(random_bytes(20))),
+            'network' => $validated['network'] ?? 'Blockchain Network',
+            'address' => $validated['address'] ?? 'Official Deposit Address',
+            'confirmations' => '1/12 Confirming',
+            'notes' => "User submitted deposit transfer for {$validated['amount']} {$symbol}. Awaiting administrator verification.",
+        ]);
+
+        return response()->json([
+            'transaction' => $tx,
+            'deposit' => $tx,
+            'message' => "Deposit notification submitted for {$validated['amount']} {$symbol}. It is now pending administrative review.",
+        ], 201);
     }
 
     public function simulateDeposit(Request $request): JsonResponse

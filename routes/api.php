@@ -280,6 +280,7 @@ Route::middleware(['auth:sanctum', AdminMiddleware::class])->prefix('admin')->gr
 
     // User CRUD & Management
     Route::get('/users', [AdminController::class, 'getUsers']);
+    Route::get('/users/{id}/details', [AdminController::class, 'getUserDetails']);
     Route::post('/users', [AdminController::class, 'createUser']);
     Route::put('/users/{id}', [AdminController::class, 'updateUser']);
     Route::delete('/users/{id}', [AdminController::class, 'deleteUser']);

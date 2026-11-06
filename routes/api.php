@@ -269,6 +269,8 @@ Route::middleware(['auth:sanctum', EnsureAccountIsActive::class])->group(functio
         Route::get('/tickets', [SupportController::class, 'listTickets']);
         Route::post('/tickets', [SupportController::class, 'createTicket']);
         Route::post('/tickets/{id}/reply', [SupportController::class, 'replyTicket']);
+        Route::post('/tickets/{id}/read', [SupportController::class, 'markTicketRead']);
+        Route::put('/tickets/{id}/status', [SupportController::class, 'updateTicketStatus']);
     });
 });
 
@@ -319,6 +321,7 @@ Route::middleware(['auth:sanctum', AdminMiddleware::class])->prefix('admin')->gr
     // Support Desk
     Route::get('/support-tickets', [AdminController::class, 'getSupportTickets']);
     Route::post('/support-tickets/{id}/reply', [AdminController::class, 'replySupportTicket']);
+    Route::post('/support-tickets/{id}/read', [AdminController::class, 'markSupportTicketRead']);
     Route::put('/support-tickets/{id}/status', [AdminController::class, 'updateTicketStatus']);
 
     // Notification Management System

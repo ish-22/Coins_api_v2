@@ -1508,38 +1508,82 @@ class AdminController extends Controller
         ]);
     }
 
-    public function getSupportTickets(): JsonResponse
+    public function getSupportTickets(Request $request): JsonResponse
     {
-        $tickets = SupportTicket::with(['user', 'messages'])
-            ->orderBy('created_at', 'desc')
-            ->get()
-            ->map(function ($ticket) {
-                return [
-                    'id' => (string) $ticket->id,
-                    'ticketRef' => $ticket->ticket_ref,
-                    'userId' => (string) $ticket->user_id,
-                    'userName' => $ticket->user ? $ticket->user->name : 'Customer',
-                    'userEmail' => $ticket->user ? $ticket->user->email : 'support@coinplus.io',
-                    'subject' => $ticket->subject,
-                    'category' => $ticket->category,
-                    'priority' => $ticket->priority,
-                    'status' => $ticket->status,
-                    'createdAt' => $ticket->created_at ? $ticket->created_at->format('M d, Y H:i') : null,
-                    'updatedAt' => $ticket->updated_at ? $ticket->updated_at->format('M d, Y H:i') : null,
-                    'messages' => $ticket->messages->map(function ($msg) {
-                        return [
-                            'id' => (string) $msg->id,
-                            'sender' => $msg->sender_type,
-                            'senderName' => $msg->sender_name,
-                            'message' => $msg->message,
-                            'timestamp' => $msg->created_at ? $msg->created_at->format('M d, Y H:i') : null,
-                        ];
-                    })->values()->all(),
-                ];
+        $search = trim($request->query('q', ''));
+        $status = $request->query('status', 'all');
+
+        $query = SupportTicket::with(['user', 'messages' => function ($q) {
+            $q->orderBy('created_at', 'asc');
+        }]);
+
+        if (!empty($search)) {
+            $query->where(function ($q) use ($search) {
+                $q->where('ticket_ref', 'LIKE', "%{$search}%")
+                  ->orWhere('subject', 'LIKE', "%{$search}%")
+                  ->orWhereHas('user', function ($uq) use ($search) {
+                      $uq->where('name', 'LIKE', "%{$search}%")
+                         ->orWhere('email', 'LIKE', "%{$search}%")
+                         ->orWhere('uid', 'LIKE', "%{$search}%")
+                         ->orWhere('id', 'LIKE', "%{$search}%");
+                  });
             });
+        }
+
+        if (!empty($status) && $status !== 'all') {
+            if ($status === 'unread') {
+                $query->whereHas('messages', function ($mq) {
+                    $mq->where('sender_type', 'user')->where('is_read', false);
+                });
+            } else {
+                $query->where('status', $status);
+            }
+        }
+
+        $allTickets = SupportTicket::with(['messages'])->get();
+        $totalUnreadMessages = SupportMessage::where('sender_type', 'user')->where('is_read', false)->count();
+
+        $tickets = $query->orderBy('updated_at', 'desc')->get()->map(function ($ticket) {
+            $unreadCount = $ticket->messages->where('sender_type', 'user')->where('is_read', false)->count();
+
+            return [
+                'id' => (string) $ticket->id,
+                'ticketRef' => $ticket->ticket_ref,
+                'userId' => (string) $ticket->user_id,
+                'userRef' => $ticket->user?->uid ?? ('CP-USR-' . str_pad($ticket->user_id, 4, '0', STR_PAD_LEFT)),
+                'userName' => $ticket->user ? $ticket->user->name : 'Customer',
+                'userEmail' => $ticket->user ? $ticket->user->email : 'support@coinplus.io',
+                'subject' => $ticket->subject,
+                'category' => $ticket->category,
+                'priority' => $ticket->priority,
+                'status' => $ticket->status,
+                'unreadCount' => $unreadCount,
+                'createdAt' => $ticket->created_at ? $ticket->created_at->format('M d, Y H:i') : null,
+                'updatedAt' => $ticket->updated_at ? $ticket->updated_at->format('M d, Y H:i') : null,
+                'messages' => $ticket->messages->map(function ($msg) {
+                    return [
+                        'id' => (string) $msg->id,
+                        'sender' => $msg->sender_type,
+                        'senderName' => $msg->sender_name,
+                        'message' => $msg->message,
+                        'isRead' => (bool) $msg->is_read,
+                        'timestamp' => $msg->created_at ? $msg->created_at->format('M d, Y H:i') : null,
+                    ];
+                })->values()->all(),
+            ];
+        });
 
         return response()->json([
             'tickets' => $tickets,
+            'metrics' => [
+                'totalTickets' => $allTickets->count(),
+                'unreadTotal' => $totalUnreadMessages,
+                'openCount' => $allTickets->where('status', 'open')->count(),
+                'inProgressCount' => $allTickets->where('status', 'in_progress')->count(),
+                'waitingUserCount' => $allTickets->where('status', 'waiting_user')->count(),
+                'resolvedCount' => $allTickets->where('status', 'resolved')->count(),
+                'closedCount' => $allTickets->where('status', 'closed')->count(),
+            ],
         ]);
     }
 
@@ -1549,17 +1593,36 @@ class AdminController extends Controller
             'message' => ['required', 'string'],
         ]);
 
-        $ticket = SupportTicket::findOrFail($id);
+        $ticket = SupportTicket::with('user')->findOrFail($id);
+
+        // Mark previous user messages on this ticket as read
+        SupportMessage::where('support_ticket_id', $ticket->id)
+            ->where('sender_type', 'user')
+            ->where('is_read', false)
+            ->update(['is_read' => true]);
 
         $msg = SupportMessage::create([
             'support_ticket_id' => $ticket->id,
             'sender_type' => 'agent',
             'sender_name' => $request->user()->name,
             'message' => $validated['message'],
+            'is_read' => false,
         ]);
 
         $ticket->status = 'waiting_user';
+        $ticket->touch();
         $ticket->save();
+
+        AuditLog::create([
+            'event_id' => 'EVT-' . rand(1000, 9999),
+            'user_id' => $request->user()->id,
+            'admin_email' => $request->user()->email,
+            'admin_name' => $request->user()->name,
+            'action' => "Support Ticket Reply: {$ticket->ticket_ref}",
+            'category' => 'Support Desk',
+            'ip_address' => $request->ip(),
+            'details' => "Replied to ticket {$ticket->ticket_ref} of {$ticket->user?->email}",
+        ]);
 
         return response()->json([
             'message' => 'Support reply posted successfully.',
@@ -1568,24 +1631,59 @@ class AdminController extends Controller
                 'sender' => 'agent',
                 'senderName' => $request->user()->name,
                 'message' => $msg->message,
-                'created_at' => $msg->created_at,
+                'isRead' => false,
+                'timestamp' => $msg->created_at ? $msg->created_at->format('M d, Y H:i') : null,
+            ],
+            'ticket' => [
+                'id' => (string) $ticket->id,
+                'status' => $ticket->status,
+                'updatedAt' => $ticket->updated_at ? $ticket->updated_at->format('M d, Y H:i') : null,
             ],
         ], 201);
+    }
+
+    public function markSupportTicketRead(Request $request, int $id): JsonResponse
+    {
+        $ticket = SupportTicket::findOrFail($id);
+
+        SupportMessage::where('support_ticket_id', $ticket->id)
+            ->where('sender_type', 'user')
+            ->where('is_read', false)
+            ->update(['is_read' => true]);
+
+        return response()->json([
+            'success' => true,
+            'message' => "Customer messages in ticket {$ticket->ticket_ref} marked as read.",
+        ]);
     }
 
     public function updateTicketStatus(Request $request, int $id): JsonResponse
     {
         $validated = $request->validate([
-            'status' => ['required', 'in:open,in_progress,waiting_user,resolved'],
+            'status' => ['required', 'in:open,in_progress,waiting_user,resolved,closed'],
         ]);
 
         $ticket = SupportTicket::findOrFail($id);
         $ticket->status = $validated['status'];
         $ticket->save();
 
+        AuditLog::create([
+            'event_id' => 'EVT-' . rand(1000, 9999),
+            'user_id' => $request->user()->id,
+            'admin_email' => $request->user()->email,
+            'admin_name' => $request->user()->name,
+            'action' => "Ticket Status Changed: {$ticket->ticket_ref} to {$ticket->status}",
+            'category' => 'Support Desk',
+            'ip_address' => $request->ip(),
+            'details' => "Support ticket {$ticket->ticket_ref} status changed to {$ticket->status}",
+        ]);
+
         return response()->json([
             'message' => "Support ticket {$ticket->ticket_ref} status updated to {$ticket->status}.",
-            'ticket' => $ticket,
+            'ticket' => [
+                'id' => (string) $ticket->id,
+                'status' => $ticket->status,
+            ],
         ]);
     }
 

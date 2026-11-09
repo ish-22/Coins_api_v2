@@ -1594,19 +1594,33 @@ class AdminController extends Controller
         ]);
     }
 
-    public function getAuditLogs(): JsonResponse
+    public function getAuditLogs(Request $request): JsonResponse
     {
-        $logs = AuditLog::orderBy('created_at', 'desc')->take(100)->get()->map(function ($log) {
+        $limit = min((int) $request->query('limit', 200), 500);
+        $logs = AuditLog::orderBy('created_at', 'desc')->take($limit)->get()->map(function ($log) {
+            $action = $log->action ?? 'System Event';
+            $details = $log->details ?? 'Administrative event executed.';
+            
+            // Intelligent target resolution
+            $target = 'System Parameters';
+            if (preg_match('/(TCK-[0-9A-Z]+)/', $action . ' ' . $details, $m)) {
+                $target = $m[1];
+            } elseif (preg_match('/(UID-[0-9A-Z]+)/', $action . ' ' . $details, $m)) {
+                $target = $m[1];
+            } elseif ($log->user_id) {
+                $target = 'UID-' . $log->user_id;
+            }
+
             return [
                 'id' => (string) $log->id,
                 'eventId' => $log->event_id ?? ('EVT-' . $log->id),
                 'adminId' => $log->user_id ? ('ADM-' . $log->user_id) : 'ADM-1',
                 'adminEmail' => $log->admin_email ?? 'operator@coinplus.io',
-                'adminName' => $log->admin_name ?? 'Chief Operator',
-                'action' => $log->action ?? 'System Event',
-                'category' => $log->category ?? 'System',
-                'target' => $log->user_id ? ('UID-' . $log->user_id) : 'System Parameters',
-                'details' => $log->details ?? 'Administrative event executed.',
+                'adminName' => $log->admin_name ?? 'System Operator',
+                'action' => $action,
+                'category' => $log->category ?? 'System Operations',
+                'target' => $target,
+                'details' => $details,
                 'timestamp' => $log->created_at ? $log->created_at->format('Y-m-d H:i:s') : now()->format('Y-m-d H:i:s'),
                 'result' => 'success',
                 'ipAddress' => $log->ip_address ?? '127.0.0.1',
@@ -1615,6 +1629,7 @@ class AdminController extends Controller
 
         return response()->json([
             'logs' => $logs,
+            'total' => AuditLog::count(),
         ]);
     }
 

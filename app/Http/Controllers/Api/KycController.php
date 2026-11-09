@@ -4,11 +4,46 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\KycVerification;
+use App\Models\Notification;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 class KycController extends Controller
 {
+    private function saveDocumentFile($dataOrFile, string $prefix = 'doc'): ?string
+    {
+        if (empty($dataOrFile)) {
+            return null;
+        }
+
+        // If it is an uploaded file
+        if ($dataOrFile instanceof \Illuminate\Http\UploadedFile) {
+            $path = $dataOrFile->store('kyc', 'public');
+            return 'storage/' . $path;
+        }
+
+        // If it is a base64 data URI (from FileReader)
+        if (is_string($dataOrFile) && preg_match('/^data:image\/(\w+);base64,/', $dataOrFile, $matches)) {
+            $extension = strtolower($matches[1]);
+            if ($extension === 'jpeg') $extension = 'jpg';
+            $base64 = substr($dataOrFile, strpos($dataOrFile, ',') + 1);
+            $decoded = base64_decode($base64);
+            if ($decoded !== false) {
+                $filename = $prefix . '_' . uniqid() . '.' . $extension;
+                Storage::disk('public')->put('kyc/' . $filename, $decoded);
+                return 'storage/kyc/' . $filename;
+            }
+        }
+
+        // If it is already a stored path or plain filename under 255 chars
+        if (is_string($dataOrFile)) {
+            return substr($dataOrFile, 0, 255);
+        }
+
+        return null;
+    }
+
     public function getStatus(Request $request): JsonResponse
     {
         $user = $request->user();
@@ -39,7 +74,6 @@ class KycController extends Controller
         ]);
 
         $user = $request->user();
-        // Trading account remains unverified until administrative compliance approval
         $user->kyc_tier = 'Tier 1 (In Review)';
         $user->save();
 
@@ -54,6 +88,16 @@ class KycController extends Controller
             'id_back_path' => 'tier1_id_back.jpg',
             'reviewed_at' => null,
         ]);
+
+        try {
+            Notification::create([
+                'user_id' => $user->id,
+                'title' => 'KYC Tier 1 Submitted',
+                'message' => 'Your Tier 1 Basic Identity verification was submitted and is pending compliance review.',
+                'type' => 'security',
+                'read' => false,
+            ]);
+        } catch (\Throwable $e) {}
 
         return response()->json([
             'kycTier' => $user->kyc_tier,
@@ -74,9 +118,9 @@ class KycController extends Controller
             'documentType' => ['nullable', 'string'],
             'documentNumber' => ['nullable', 'string'],
             'proofOfAddressType' => ['nullable', 'string'],
-            'idFront' => ['nullable', 'string'],
-            'idBack' => ['nullable', 'string'],
-            'proofOfAddress' => ['nullable', 'string'],
+            'idFront' => ['nullable'],
+            'idBack' => ['nullable'],
+            'proofOfAddress' => ['nullable'],
         ]);
 
         $user = $request->user();
@@ -89,14 +133,18 @@ class KycController extends Controller
         if (!empty($validated['country'])) {
             $user->country = $validated['country'];
         }
-        // Trading account remains unverified until administrative compliance approval
+
         $user->kyc_tier = 'Tier 2 (In Review)';
         $user->save();
 
         $docType = $validated['documentType'] ?? 'Passport';
-        $frontName = $validated['idFront'] ?? ($docType === 'Passport' ? 'passport_front_scan.jpg' : 'id_front_scan.jpg');
-        $backName = $validated['idBack'] ?? ($docType === 'Passport' ? 'passport_signature_page.jpg' : 'id_back_scan.jpg');
-        $poaName = $validated['proofOfAddress'] ?? 'proof_of_address.pdf';
+        $frontRaw = $request->file('idFront') ?? $validated['idFront'] ?? null;
+        $backRaw = $request->file('idBack') ?? $validated['idBack'] ?? null;
+        $poaRaw = $request->file('proofOfAddress') ?? $validated['proofOfAddress'] ?? null;
+
+        $frontPath = $this->saveDocumentFile($frontRaw, 'id_front') ?? ($docType === 'Passport' ? 'passport_front_scan.jpg' : 'id_front_scan.jpg');
+        $backPath = $this->saveDocumentFile($backRaw, 'id_back') ?? ($docType === 'Passport' ? 'passport_signature_page.jpg' : 'id_back_scan.jpg');
+        $poaPath = $this->saveDocumentFile($poaRaw, 'poa') ?? 'proof_of_address.pdf';
 
         $case = KycVerification::create([
             'case_ref' => 'KYC-' . rand(10000, 99999),
@@ -106,11 +154,21 @@ class KycController extends Controller
             'document_type' => $docType,
             'document_number' => $validated['documentNumber'] ?? ('DOC-' . rand(100000, 999999)),
             'proof_of_address_type' => $validated['proofOfAddressType'] ?? 'Utility Bill',
-            'id_front_path' => $frontName,
-            'id_back_path' => $backName,
-            'proof_of_address_path' => $poaName,
+            'id_front_path' => $frontPath,
+            'id_back_path' => $backPath,
+            'proof_of_address_path' => $poaPath,
             'reviewed_at' => null,
         ]);
+
+        try {
+            Notification::create([
+                'user_id' => $user->id,
+                'title' => 'KYC Documents Submitted',
+                'message' => 'Your Tier 2 verification documents have been submitted and are under compliance review.',
+                'type' => 'security',
+                'read' => false,
+            ]);
+        } catch (\Throwable $e) {}
 
         return response()->json([
             'case' => $case,

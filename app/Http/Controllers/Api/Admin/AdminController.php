@@ -470,6 +470,15 @@ class AdminController extends Controller
     public function getKycCases(): JsonResponse
     {
         $cases = KycVerification::with('user')->orderBy('created_at', 'desc')->get()->map(function ($c) {
+            $front = $c->id_front_path;
+            $back = $c->id_back_path;
+            $poa = $c->proof_of_address_path;
+
+            $baseUrl = request()->getSchemeAndHttpHost();
+            $frontUrl = ($front && str_starts_with($front, 'storage/')) ? "{$baseUrl}/{$front}" : $front;
+            $backUrl = ($back && str_starts_with($back, 'storage/')) ? "{$baseUrl}/{$back}" : $back;
+            $poaUrl = ($poa && str_starts_with($poa, 'storage/')) ? "{$baseUrl}/{$poa}" : $poa;
+
             return [
                 'id' => (string) $c->id,
                 'caseRef' => $c->case_ref,
@@ -488,6 +497,9 @@ class AdminController extends Controller
                 'idFrontPlaceholder' => $c->id_front_path ?? ($c->document_type === 'Passport' ? 'passport_front_scan.jpg' : 'id_card_front.jpg'),
                 'idBackPlaceholder' => $c->id_back_path ?? ($c->document_type === 'Passport' ? 'passport_signature_page.jpg' : 'id_card_back.jpg'),
                 'proofOfAddressPlaceholder' => $c->proof_of_address_path ?? 'proof_of_address.pdf',
+                'idFrontUrl' => $frontUrl,
+                'idBackUrl' => $backUrl,
+                'proofOfAddressUrl' => $poaUrl,
             ];
         });
 
@@ -520,6 +532,21 @@ class AdminController extends Controller
                 $case->user->kyc_tier = 'Tier 0 (Rejected)';
             }
             $case->user->save();
+
+            // Dispatch user notification
+            try {
+                \App\Models\Notification::create([
+                    'user_id' => $case->user->id,
+                    'title' => ($case->status === 'approved') ? 'KYC Verification Approved' : 'KYC Verification Rejected',
+                    'message' => ($case->status === 'approved')
+                        ? "Congratulations! Your identity documents ({$case->document_type}) have been approved. Your account has been upgraded to VERIFIED status with unlocked trading and withdrawal limits."
+                        : "Your identity verification could not be approved. Reason: " . ($case->rejection_reason ?? 'Document verification requirements were not met.') . ". Please resubmit clear identification documents.",
+                    'type' => 'security',
+                    'read' => false,
+                ]);
+            } catch (\Throwable $e) {
+                // Silently ignore notification failure if table issue
+            }
         }
 
         AuditLog::create([

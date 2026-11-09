@@ -25,6 +25,7 @@ class SupportController extends Controller
             return [
                 'id' => (string) $ticket->id,
                 'ticket_ref' => $ticket->ticket_ref,
+                'ticketRef' => $ticket->ticket_ref,
                 'subject' => $ticket->subject,
                 'category' => $ticket->category,
                 'priority' => $ticket->priority,
@@ -85,6 +86,7 @@ class SupportController extends Controller
             'ticket' => [
                 'id' => (string) $ticket->id,
                 'ticket_ref' => $ticket->ticket_ref,
+                'ticketRef' => $ticket->ticket_ref,
                 'subject' => $ticket->subject,
                 'category' => $ticket->category,
                 'priority' => $ticket->priority,
@@ -142,6 +144,7 @@ class SupportController extends Controller
             'ticket' => [
                 'id' => (string) $ticket->id,
                 'status' => $ticket->status,
+                'updatedAt' => $ticket->updated_at ? $ticket->updated_at->format('M d, Y H:i') : null,
             ],
         ], 201);
     }
@@ -165,7 +168,7 @@ class SupportController extends Controller
     public function updateTicketStatus(Request $request, int $id): JsonResponse
     {
         $validated = $request->validate([
-            'status' => ['required', 'in:resolved,closed,open'],
+            'status' => ['required', 'in:open,in_progress,waiting_user,resolved,closed'],
         ]);
 
         $user = $request->user();

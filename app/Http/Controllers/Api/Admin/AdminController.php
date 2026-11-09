@@ -1659,6 +1659,7 @@ class AdminController extends Controller
             return [
                 'id' => (string) $ticket->id,
                 'ticketRef' => $ticket->ticket_ref,
+                'ticket_ref' => $ticket->ticket_ref,
                 'userId' => (string) $ticket->user_id,
                 'userRef' => $ticket->user?->uid ?? ('CP-USR-' . str_pad($ticket->user_id, 4, '0', STR_PAD_LEFT)),
                 'userName' => $ticket->user ? $ticket->user->name : 'Customer',
@@ -1734,6 +1735,16 @@ class AdminController extends Controller
             'details' => "Replied to ticket {$ticket->ticket_ref} of {$ticket->user?->email}",
         ]);
 
+        try {
+            \App\Models\Notification::create([
+                'user_id' => $ticket->user_id,
+                'title' => 'Support Desk Response',
+                'message' => "Support agent replied to your ticket ({$ticket->ticket_ref}): \"" . \Illuminate\Support\Str::limit($validated['message'], 100) . "\"",
+                'type' => 'security',
+                'read' => false,
+            ]);
+        } catch (\Throwable $e) {}
+
         return response()->json([
             'message' => 'Support reply posted successfully.',
             'reply' => [
@@ -1787,6 +1798,16 @@ class AdminController extends Controller
             'ip_address' => $request->ip(),
             'details' => "Support ticket {$ticket->ticket_ref} status changed to {$ticket->status}",
         ]);
+
+        try {
+            \App\Models\Notification::create([
+                'user_id' => $ticket->user_id,
+                'title' => 'Support Ticket ' . ucfirst(str_replace('_', ' ', $ticket->status)),
+                'message' => "Your support conversation ({$ticket->ticket_ref}) has been marked as {$ticket->status} by administrator.",
+                'type' => 'security',
+                'read' => false,
+            ]);
+        } catch (\Throwable $e) {}
 
         return response()->json([
             'message' => "Support ticket {$ticket->ticket_ref} status updated to {$ticket->status}.",

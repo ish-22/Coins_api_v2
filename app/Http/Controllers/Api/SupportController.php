@@ -10,6 +10,45 @@ use Illuminate\Http\Request;
 
 class SupportController extends Controller
 {
+    private function saveAttachment($dataOrFile, string $prefix = 'support'): ?string
+    {
+        if (empty($dataOrFile)) {
+            return null;
+        }
+
+        // If it is an uploaded file
+        if ($dataOrFile instanceof \Illuminate\Http\UploadedFile) {
+            $path = $dataOrFile->store('support', 'public');
+            return 'storage/' . $path;
+        }
+
+        // If it is a base64 data URI (from browser FileReader)
+        if (is_string($dataOrFile) && preg_match('/^data:([a-zA-Z0-9\/\+]+);base64,/', $dataOrFile, $matches)) {
+            $mime = strtolower($matches[1]);
+            $extension = 'png';
+            if (str_contains($mime, 'jpeg') || str_contains($mime, 'jpg')) $extension = 'jpg';
+            elseif (str_contains($mime, 'png')) $extension = 'png';
+            elseif (str_contains($mime, 'webp')) $extension = 'webp';
+            elseif (str_contains($mime, 'pdf')) $extension = 'pdf';
+            elseif (str_contains($mime, 'gif')) $extension = 'gif';
+
+            $base64 = substr($dataOrFile, strpos($dataOrFile, ',') + 1);
+            $decoded = base64_decode($base64);
+            if ($decoded !== false) {
+                $filename = $prefix . '_' . uniqid() . '.' . $extension;
+                \Illuminate\Support\Facades\Storage::disk('public')->put('support/' . $filename, $decoded);
+                return 'storage/support/' . $filename;
+            }
+        }
+
+        // Plain string/URL under 500 chars
+        if (is_string($dataOrFile) && strlen($dataOrFile) < 500) {
+            return $dataOrFile;
+        }
+
+        return null;
+    }
+
     public function listTickets(Request $request): JsonResponse
     {
         $user = $request->user();
@@ -30,6 +69,10 @@ class SupportController extends Controller
                 'category' => $ticket->category,
                 'priority' => $ticket->priority,
                 'status' => $ticket->status,
+                'attachmentName' => $ticket->attachment_name,
+                'attachment_name' => $ticket->attachment_name,
+                'attachmentUrl' => $ticket->attachment_url ? (str_starts_with($ticket->attachment_url, 'http') ? $ticket->attachment_url : url($ticket->attachment_url)) : null,
+                'attachment_url' => $ticket->attachment_url ? (str_starts_with($ticket->attachment_url, 'http') ? $ticket->attachment_url : url($ticket->attachment_url)) : null,
                 'unreadCount' => $unreadCount,
                 'createdAt' => $ticket->created_at ? $ticket->created_at->format('M d, Y H:i') : null,
                 'updatedAt' => $ticket->updated_at ? $ticket->updated_at->format('M d, Y H:i') : null,
@@ -39,6 +82,10 @@ class SupportController extends Controller
                         'sender' => $msg->sender_type,
                         'senderName' => $msg->sender_name,
                         'message' => $msg->message,
+                        'attachmentName' => $msg->attachment_name,
+                        'attachment_name' => $msg->attachment_name,
+                        'attachmentUrl' => $msg->attachment_url ? (str_starts_with($msg->attachment_url, 'http') ? $msg->attachment_url : url($msg->attachment_url)) : null,
+                        'attachment_url' => $msg->attachment_url ? (str_starts_with($msg->attachment_url, 'http') ? $msg->attachment_url : url($msg->attachment_url)) : null,
                         'isRead' => (bool) $msg->is_read,
                         'timestamp' => $msg->created_at ? $msg->created_at->format('M d, Y H:i') : null,
                     ];
@@ -58,12 +105,20 @@ class SupportController extends Controller
     {
         $validated = $request->validate([
             'subject' => ['required', 'string', 'max:255'],
-            'category' => ['required', 'in:trading,account,deposits,withdrawals,kyc,security,wallet'],
+            'category' => ['required', 'string'],
             'priority' => ['required', 'in:low,medium,high,urgent'],
             'message' => ['required', 'string'],
+            'attachmentName' => ['nullable', 'string', 'max:255'],
+            'attachmentData' => ['nullable', 'string'],
+            'attachment' => ['nullable'],
         ]);
 
         $user = $request->user();
+
+        $attachmentUrl = $this->saveAttachment(
+            $request->file('attachment') ?? $validated['attachmentData'] ?? $request->input('attachment')
+        );
+        $attachmentName = $validated['attachmentName'] ?? ($request->hasFile('attachment') ? $request->file('attachment')->getClientOriginalName() : null);
 
         $ticket = SupportTicket::create([
             'ticket_ref' => 'TCK-' . rand(10000, 99999),
@@ -72,6 +127,8 @@ class SupportController extends Controller
             'category' => $validated['category'],
             'priority' => $validated['priority'],
             'status' => 'open',
+            'attachment_name' => $attachmentName,
+            'attachment_url' => $attachmentUrl,
         ]);
 
         $msg = SupportMessage::create([
@@ -79,6 +136,8 @@ class SupportController extends Controller
             'sender_type' => 'user',
             'sender_name' => $user->display_name ?? $user->name,
             'message' => $validated['message'],
+            'attachment_name' => $attachmentName,
+            'attachment_url' => $attachmentUrl,
             'is_read' => false,
         ]);
 
@@ -91,6 +150,10 @@ class SupportController extends Controller
                 'category' => $ticket->category,
                 'priority' => $ticket->priority,
                 'status' => $ticket->status,
+                'attachmentName' => $ticket->attachment_name,
+                'attachment_name' => $ticket->attachment_name,
+                'attachmentUrl' => $ticket->attachment_url ? (str_starts_with($ticket->attachment_url, 'http') ? $ticket->attachment_url : url($ticket->attachment_url)) : null,
+                'attachment_url' => $ticket->attachment_url ? (str_starts_with($ticket->attachment_url, 'http') ? $ticket->attachment_url : url($ticket->attachment_url)) : null,
                 'unreadCount' => 0,
                 'createdAt' => $ticket->created_at ? $ticket->created_at->format('M d, Y H:i') : null,
                 'updatedAt' => $ticket->updated_at ? $ticket->updated_at->format('M d, Y H:i') : null,
@@ -99,6 +162,10 @@ class SupportController extends Controller
                     'sender' => 'user',
                     'senderName' => $msg->sender_name,
                     'message' => $msg->message,
+                    'attachmentName' => $msg->attachment_name,
+                    'attachment_name' => $msg->attachment_name,
+                    'attachmentUrl' => $msg->attachment_url ? (str_starts_with($msg->attachment_url, 'http') ? $msg->attachment_url : url($msg->attachment_url)) : null,
+                    'attachment_url' => $msg->attachment_url ? (str_starts_with($msg->attachment_url, 'http') ? $msg->attachment_url : url($msg->attachment_url)) : null,
                     'isRead' => false,
                     'timestamp' => $msg->created_at ? $msg->created_at->format('M d, Y H:i') : null,
                 ]],
@@ -111,16 +178,26 @@ class SupportController extends Controller
     {
         $validated = $request->validate([
             'message' => ['required', 'string'],
+            'attachmentName' => ['nullable', 'string', 'max:255'],
+            'attachmentData' => ['nullable', 'string'],
+            'attachment' => ['nullable'],
         ]);
 
         $user = $request->user();
         $ticket = SupportTicket::where('user_id', $user->id)->findOrFail($id);
+
+        $attachmentUrl = $this->saveAttachment(
+            $request->file('attachment') ?? $validated['attachmentData'] ?? $request->input('attachment')
+        );
+        $attachmentName = $validated['attachmentName'] ?? ($request->hasFile('attachment') ? $request->file('attachment')->getClientOriginalName() : null);
 
         $msg = SupportMessage::create([
             'support_ticket_id' => $ticket->id,
             'sender_type' => 'user',
             'sender_name' => $user->display_name ?? $user->name,
             'message' => $validated['message'],
+            'attachment_name' => $attachmentName,
+            'attachment_url' => $attachmentUrl,
             'is_read' => false,
         ]);
 
@@ -138,6 +215,10 @@ class SupportController extends Controller
                 'sender' => 'user',
                 'senderName' => $msg->sender_name,
                 'message' => $msg->message,
+                'attachmentName' => $msg->attachment_name,
+                'attachment_name' => $msg->attachment_name,
+                'attachmentUrl' => $msg->attachment_url ? (str_starts_with($msg->attachment_url, 'http') ? $msg->attachment_url : url($msg->attachment_url)) : null,
+                'attachment_url' => $msg->attachment_url ? (str_starts_with($msg->attachment_url, 'http') ? $msg->attachment_url : url($msg->attachment_url)) : null,
                 'isRead' => false,
                 'timestamp' => $msg->created_at ? $msg->created_at->format('M d, Y H:i') : null,
             ],

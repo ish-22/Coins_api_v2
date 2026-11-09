@@ -18,6 +18,8 @@ class SupportTicket extends Model
         'category',
         'priority',
         'status',
+        'attachment_name',
+        'attachment_url',
     ];
 
     public function user(): BelongsTo

@@ -7,12 +7,21 @@ return new class extends Migration
 {
     public function up(): void
     {
-        DB::statement("ALTER TABLE `support_tickets` MODIFY `category` VARCHAR(32) NOT NULL DEFAULT 'trading'");
+        $driver = DB::getDriverName();
+        if ($driver === 'pgsql') {
+            DB::statement("ALTER TABLE support_tickets ALTER COLUMN category TYPE VARCHAR(32) USING category::VARCHAR(32)");
+            DB::statement("ALTER TABLE support_tickets ALTER COLUMN category SET DEFAULT 'trading'");
+        } else {
+            DB::statement("ALTER TABLE support_tickets MODIFY category VARCHAR(32) NOT NULL DEFAULT 'trading'");
+        }
     }
 
     public function down(): void
     {
-        DB::statement("ALTER TABLE `support_tickets` MODIFY `category` ENUM('trading', 'account', 'deposits', 'withdrawals', 'kyc', 'security') NOT NULL DEFAULT 'trading'");
+        $driver = DB::getDriverName();
+        if ($driver !== 'pgsql') {
+            DB::statement("ALTER TABLE support_tickets MODIFY category ENUM('trading', 'account', 'deposits', 'withdrawals', 'kyc', 'security') NOT NULL DEFAULT 'trading'");
+        }
     }
 };
 

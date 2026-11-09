@@ -9,13 +9,23 @@ return new class extends Migration
 {
     public function up(): void
     {
-        // Change status column to VARCHAR(32) to support pending, confirming, completed, failed, rejected
-        DB::statement("ALTER TABLE `transactions` MODIFY `status` VARCHAR(32) NOT NULL DEFAULT 'pending'");
+        $driver = DB::getDriverName();
+        if ($driver === 'pgsql') {
+            DB::statement("ALTER TABLE transactions ALTER COLUMN status TYPE VARCHAR(32) USING status::VARCHAR(32)");
+            DB::statement("ALTER TABLE transactions ALTER COLUMN status SET DEFAULT 'pending'");
+        } else {
+            DB::statement("ALTER TABLE transactions MODIFY status VARCHAR(32) NOT NULL DEFAULT 'pending'");
+        }
     }
 
     public function down(): void
     {
-        DB::statement("ALTER TABLE `transactions` MODIFY `status` ENUM('completed', 'processing', 'failed') NOT NULL DEFAULT 'completed'");
+        $driver = DB::getDriverName();
+        if ($driver === 'pgsql') {
+            DB::statement("ALTER TABLE transactions ALTER COLUMN status TYPE VARCHAR(32)");
+        } else {
+            DB::statement("ALTER TABLE transactions MODIFY status ENUM('completed', 'processing', 'failed') NOT NULL DEFAULT 'completed'");
+        }
     }
 };
 

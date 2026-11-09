@@ -9,14 +9,21 @@ return new class extends Migration
 {
     public function up(): void
     {
-        // 1. Alter status and category columns in support_tickets to VARCHAR(32)
-        DB::statement("ALTER TABLE `support_tickets` MODIFY `status` VARCHAR(32) NOT NULL DEFAULT 'open'");
-        DB::statement("ALTER TABLE `support_tickets` MODIFY `category` VARCHAR(32) NOT NULL DEFAULT 'trading'");
+        $driver = DB::getDriverName();
+        if ($driver === 'pgsql') {
+            DB::statement("ALTER TABLE support_tickets ALTER COLUMN status TYPE VARCHAR(32) USING status::VARCHAR(32)");
+            DB::statement("ALTER TABLE support_tickets ALTER COLUMN status SET DEFAULT 'open'");
+            DB::statement("ALTER TABLE support_tickets ALTER COLUMN category TYPE VARCHAR(32) USING category::VARCHAR(32)");
+            DB::statement("ALTER TABLE support_tickets ALTER COLUMN category SET DEFAULT 'trading'");
+        } else {
+            DB::statement("ALTER TABLE support_tickets MODIFY status VARCHAR(32) NOT NULL DEFAULT 'open'");
+            DB::statement("ALTER TABLE support_tickets MODIFY category VARCHAR(32) NOT NULL DEFAULT 'trading'");
+        }
 
         // 2. Add is_read column to support_messages if it doesn't already exist
         if (!Schema::hasColumn('support_messages', 'is_read')) {
             Schema::table('support_messages', function (Blueprint $table) {
-                $table->boolean('is_read')->default(false)->after('message');
+                $table->boolean('is_read')->default(false);
             });
         }
     }
@@ -28,6 +35,9 @@ return new class extends Migration
                 $table->dropColumn('is_read');
             });
         }
-        DB::statement("ALTER TABLE `support_tickets` MODIFY `status` ENUM('open', 'in_progress', 'waiting_user', 'resolved') NOT NULL DEFAULT 'open'");
+        $driver = DB::getDriverName();
+        if ($driver !== 'pgsql') {
+            DB::statement("ALTER TABLE support_tickets MODIFY status ENUM('open', 'in_progress', 'waiting_user', 'resolved') NOT NULL DEFAULT 'open'");
+        }
     }
 };
